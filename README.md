@@ -7,9 +7,13 @@ For *cis*-QTL mapping, beta-approximated empirical p-values are computed as impl
 ### Install
 
 Clone this repository
-```git@github.com:broadinstitute/tensorqtl.git```
+```
+git clone git@github.com:broadinstitute/tensorqtl.git
+```
 then run
-```pip install .```
+```
+pip install .
+```
 <!-- `pip install tensorqtl` -->
 
 ### Requirements
