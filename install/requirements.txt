@@ -1,4 +1,6 @@
 ipython
+jupyter
+matplotlib
 numpy
 pandas
 pandas-plink
