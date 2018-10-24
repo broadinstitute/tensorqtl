@@ -1,0 +1,7 @@
+ipython
+numpy
+pandas
+pandas-plink
+pyarrow
+scipy
+tensorflow-gpu
