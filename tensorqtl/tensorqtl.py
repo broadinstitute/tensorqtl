@@ -9,14 +9,27 @@ from collections import OrderedDict
 from datetime import datetime
 import sys
 import os
+import subprocess
 import glob
 import argparse
 import scipy.optimize
 import scipy.stats as stats
 from scipy.special import loggamma
 
-sys.path.append(os.path.dirname(__file__))
+sys.path.insert(1, os.path.dirname(__file__))
 import genotypeio
+
+has_rpy2 = False
+e = subprocess.call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    import rpy2
+    import rfunc
+    if e==0:
+        has_rpy2 = True
+except:
+    pass
+if not has_rpy2:
+    print("Warning: 'rfunc' cannot be imported. R and the 'rpy2' Python package are needed.")
 
 
 class SimpleLogger(object):
@@ -282,6 +295,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, nperm=1
 
     # iterate over chromosomes
     res_df = []
+    start_time = time.time()
     with tf.Session() as sess:
         for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
             logger.write('  Mapping chromosome {}'.format(chrom))
@@ -308,7 +322,56 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, nperm=1
             print()
     res_df = pd.concat(res_df, axis=1).T
     res_df.index.name = 'phenotype_id'
+    logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+
+    dtype_dict = {
+        'num_var':np.int32,
+        'beta_shape1':np.float32,
+        'beta_shape2':np.float32,
+        'true_df':np.float32,
+        'pval_true_df':np.float64,
+        'variant_id':str,
+        'tss_distance':np.int32,
+        'ma_samples':np.int32,
+        'ma_count':np.int32,
+        'maf':np.float32,
+        'ref_factor':np.int32,
+        'pval_nominal':np.float64,
+        'slope':np.float32,
+        'slope_se':np.float32,
+        'pval_perm':np.float64,
+        'pval_beta':np.float64,
+    }
+    res_df = res_df.astype(dtype_dict)
+
     logger.write('done.')
+    return res_df
+
+
+def annotate_cis_output(res_df, fdr=0.05, qvalue_lambda=None):
+    """Annotate permutation results with q-values, p-value threshold"""
+
+    print('Computing q-values')
+    print('  * Number of phenotypes tested: {}'.format(res_df.shape[0]))
+    print('  * Correlation between Beta-approximated and empirical p-values: : {:.4f}'.format(
+        stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]))
+
+    # calculate q-values
+    if qvalue_lambda is None:
+        qval, pi0 = rfunc.qvalue(res_df['pval_beta'])
+    else:
+        print('  * Calculating q-values with lambda = {:.3f}'.format(qvalue_lambda))
+        qval, pi0 = rfunc.qvalue(res_df['pval_beta'], qvalue_lambda)
+    res_df['qval'] = qval
+    print('  * Proportion of significant phenotypes (1-pi0): {:.2f}'.format(1 - pi0))
+    print('  * QTL phenotypes @ FDR {:.2f}: {}'.format(fdr, np.sum(res_df['qval']<=fdr)))
+
+    # determine global min(p) significance threshold and calculate nominal p-value threshold for each gene
+    ub = res_df.loc[res_df['qval']>fdr, 'pval_beta'].sort_values()[0]
+    lb = res_df.loc[res_df['qval']<=fdr, 'pval_beta'].sort_values()[-1]
+    pthreshold = (lb+ub)/2
+    print('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
+    res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
     return res_df
 
 
@@ -477,8 +540,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, retu
         print()
         # writer.close()
 
-    end_time = time.time()
-    logger.write('    time elapsed: {:.2f} min'.format((end_time-start_time)/60))
+    logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
     if return_sparse:
         ix = pval.indices[:,0]<n_variants  # truncate last batch
@@ -595,8 +657,7 @@ def map_trans_tfrecord(vcf_tfrecord, phenotype_df, covariates_df, interaction_s=
         print()
         # writer.close()
 
-    end_time = time.time()
-    logger.write('Time elapsed: {:.2f} min'.format((end_time-start_time)/60))
+    logger.write('Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
     if return_sparse:
         ix = pval.indices[:,0]<n_variants  # truncate last batch
@@ -673,8 +734,8 @@ if __name__ == '__main__':
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=50000, help='Batch size')
-    # parser.add_argument('--fdr', default=0.05, type=np.float64)
-    # parser.add_argument('--qvalue_lambda', default=None, help='lambda parameter for pi0est in qvalue.')
+    parser.add_argument('--fdr', default=0.05, type=np.float64)
+    parser.add_argument('--qvalue_lambda', default=None, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('-o', '--output_dir', default='.', help='Output directory')
     args = parser.parse_args()
 
@@ -713,6 +774,8 @@ if __name__ == '__main__':
             res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, nperm=args.permutations, logger=logger)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl_phenotypes.txt.gz')
+            if has_rpy2:
+                res_df = annotate_cis_output(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
             res_df.to_csv(out_file, sep='\t', float_format='%.6g', compression='gzip')
         else:
             map_cis_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
