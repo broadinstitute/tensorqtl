@@ -373,17 +373,17 @@ class InputGeneratorCis(object):
             self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
             self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
         self.phenotype_values = self.phenotype_df.values
+        self.loaded_chrom = ''
 
     @background(max_prefetch=6)
     def generate_data(self):
-        previous_chrom = ''
         for k,phenotype_id in enumerate(self.phenotype_df.index):
             chrom = self.phenotype_chr[phenotype_id]
-            if chrom != previous_chrom:
+            if chrom != self.loaded_chrom:
                 # load genotypes into memory
                 print('  * loading genotypes')
                 self.chr_genotypes, self.chr_variant_pos = self.plink_reader.get_region(chrom, verbose=True)
-                previous_chrom = chrom
+                self.loaded_chrom = chrom
 
             # return phenotype & its permutations in same array; fetch genotypes
             p = self.phenotype_values[k]
