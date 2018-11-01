@@ -64,7 +64,6 @@ output_dtype_dict = {
     'slope_se':np.float32,
     'pval_perm':np.float64,
     'pval_beta':np.float64,
-    'rank':np.int32,
 }
 
 #------------------------------------------------------------------------------
@@ -116,6 +115,16 @@ def _calculate_corr(genotype_t, phenotype_t, covariates_t, return_sd=False):
         return tf.squeeze(tf.matmul(genotype_res_t, phenotype_res_t, transpose_b=True)), tf.sqrt(pstd / gstd)
     else:
         return tf.squeeze(tf.matmul(genotype_res_t, phenotype_res_t, transpose_b=True))
+
+
+def _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, maf_threshold=0.05):
+    maf_t = calculate_maf(genotypes_t)
+    ix = tf.where(maf_t>maf_threshold)
+
+    r2_nom_t = tf.pow(tf.gather(_calculate_corr(genotypes_t, phenotypes_t, covariates_t), ix), 2)
+    r2_emp_t = tf.pow(tf.gather(_calculate_corr(genotypes_t, permutations_t, covariates_t), ix), 2)
+
+    return tf.squeeze(tf.reduce_max(r2_nom_t, axis=0)), tf.squeeze(tf.reduce_max(r2_emp_t, axis=0))
 
 
 def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0):
@@ -249,7 +258,7 @@ def calculate_cis_permutations(genotypes_t, range_t, phenotype_t, covariates_t, 
     return r_nominal_t[ix], std_ratio_t[ix], range_t[ix], r2_perm_t, genotypes_t[ix], tf.shape(r_nominal_t)[0]
 
 
-def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, ng, dof, n_samples, nperm=10000):
+def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, num_var, dof, n_samples, nperm=10000):
     """Calculate beta-approximated empirical p-value and annotate phenotype"""
     r2_nominal = r_nominal*r_nominal
     pval_perm = (np.sum(r2_perm>=r2_nominal)+1) / (nperm+1)
@@ -271,7 +280,7 @@ def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, ng, dof, n_sample
     slope_se = np.abs(slope) / np.sqrt(tstat2)
 
     return pd.Series(OrderedDict([
-        ('num_var', ng),
+        ('num_var', num_var),
         ('beta_shape1', beta_shape1),
         ('beta_shape2', beta_shape2),
         ('true_df', true_dof),
@@ -347,7 +356,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, nperm=1
     return res_df.astype(output_dtype_dict)
 
 
-def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, fdr=0.05, nperm=10000, logger=None):
+def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, fdr=0.05, fdr_col='qval', nperm=10000, logger=None):
     """
     Run independent cis-QTL mapping (forward-backward regression)
 
@@ -357,7 +366,7 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
     if logger is None:
         logger = SimpleLogger()
 
-    signif_df = summary_df[summary_df['qval']<=fdr].copy()
+    signif_df = summary_df[summary_df[fdr_col]<=fdr].copy()
     signif_df = signif_df[[
         'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df',
         'variant_id', 'tss_distance', 'ma_samples', 'ma_count', 'maf', 'ref_factor',

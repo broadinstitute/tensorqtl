@@ -7,7 +7,7 @@ from rpy2.robjects.packages import importr
 def p_adjust(p, method='BH'):
     """Wrapper for p.adjust"""
     rp = rpy2.robjects.vectors.FloatVector(p)
-    r_padjust = robjects.r['p.adjust']
+    r_padjust = rpy2.robjects.r['p.adjust']
     return rpy2.robjects.numpy2ri.ri2py(r_padjust(rp, method=method))
 
 
