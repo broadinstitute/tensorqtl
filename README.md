@@ -51,6 +51,10 @@ This will generate a [parquet](https://parquet.apache.org/) file for each chromo
 import pandas as pd
 df = pd.read_parquet(file_name)
 ```
+Conditionally independent *cis*-QTL (as described in [GTEx Consortium, 2017](https://www.nature.com/articles/nature24277)):
+```
+python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --cis_results ${cis_results_file} --mode cis_independent
+```
 
 #### *trans*-QTL mapping
 ```
