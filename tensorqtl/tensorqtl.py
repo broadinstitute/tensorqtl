@@ -33,15 +33,17 @@ if not has_rpy2:
 
 
 class SimpleLogger(object):
-    def __init__(self, logfile=None):
+    def __init__(self, logfile=None, verbose=True):
         self.console = sys.stdout
+        self.verbose = verbose
         if logfile is not None:
             self.log = open(logfile, 'w')
         else:
             self.log = None
 
     def write(self, message):
-        self.console.write(message+'\n')
+        if self.verbose:
+            self.console.write(message+'\n')
         if self.log is not None:
             self.log.write(message+'\n')
             self.log.flush()
@@ -672,10 +674,10 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write('done.')
 
 
-def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05, batch_size=20000, logger=None):
+def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05, batch_size=20000, logger=None, verbose=True):
     """Run trans-QTL mapping from genotypes in memory"""
     if logger is None:
-        logger = SimpleLogger()
+        logger = SimpleLogger(verbose=verbose)
     assert np.all(phenotype_df.columns==covariates_df.index)
 
     variant_ids = genotype_df.index.tolist()
@@ -721,7 +723,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, retu
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
     start_time = time.time()
-    print('  Mapping batches')
+    if verbose:
+        print('  Mapping batches')
     with tf.Session() as sess:
         # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
         # run_metadata = tf.RunMetadata()
@@ -730,8 +733,9 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, retu
         pval_list = []
         maf_list = []
         for i in range(1, ggt.num_batches+1):
-            sys.stdout.write('\r  * processing batch {}/{}'.format(i, ggt.num_batches))
-            sys.stdout.flush()
+            if verbose:
+                sys.stdout.write('\r  * processing batch {}/{}'.format(i, ggt.num_batches))
+                sys.stdout.flush()
 
             g_iter = sess.run(next_element)
             p_ = sess.run([p_values, maf], feed_dict={genotypes:g_iter})#, options=run_options, run_metadata=run_metadata)
@@ -745,7 +749,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, retu
         else:
             pval = tf.concat(pval_list, 0).eval()
         maf = tf.concat(maf_list, 0).eval()
-        print()
+        if verbose:
+            print()
         # writer.close()
 
     logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
@@ -926,24 +931,23 @@ def read_phenotype_bed(phenotype_bed):
     return phenotype_df, phenotype_pos_df
 
 
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser(description='Run TensorQTL')
-    parser.add_argument('genotype_path', help='Genotypes/dosages stored in PLINK or tfrecord format')
+def main():
+    parser = argparse.ArgumentParser(description='tensorQTL: GPU-based QTL mapper')
+    parser.add_argument('genotype_path', help='Genotypes/dosages in PLINK or tfrecord format')
     parser.add_argument('phenotype_bed', help='Phenotypes in BED format')
     parser.add_argument('prefix', help='Prefix for output file names')
-    parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'trans'])
-    parser.add_argument('--covariates', default=None, help='Covariates [covariates x samples]')
+    parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'trans'], help='Mapping mode. Default: cis')
+    parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
     parser.add_argument('--permutations', default=10000, help='Number of permutations. Default: 10000')
     parser.add_argument('--interaction', default=None, type=str, help='Interaction term')
-    parser.add_argument('--cis_results', default=None, type=str, help="Output from 'cis' mode with q-values")
-    parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1Mb')
+    parser.add_argument('--cis_results', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
+    parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
     parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >=maf_threshold. Default: 0')
-    parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL')
+    parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
-    parser.add_argument('--batch_size', type=int, default=50000, help='Batch size')
-    parser.add_argument('--fdr', default=0.05, type=np.float64)
+    parser.add_argument('--batch_size', type=int, default=50000, help='Batch size. Reduce this if encountering OOM errors.')
+    parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
     parser.add_argument('--qvalue_lambda', default=None, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('-o', '--output_dir', default='.', help='Output directory')
     args = parser.parse_args()
@@ -1024,3 +1028,7 @@ if __name__ == '__main__':
             pval_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g', compression='gzip')
 
     logger.write('[{}] Finished mapping'.format(datetime.now().strftime("%b %d %H:%M:%S")))
+
+
+if __name__ == '__main__':
+    main()

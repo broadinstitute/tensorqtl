@@ -6,7 +6,7 @@ For *cis*-QTL mapping, beta-approximated empirical p-values are computed as impl
 
 ### Install
 
-Run the following commands to install tensorqtl:
+Run the following commands to install tensorQTL:
 ```
 $ git clone git@github.com:broadinstitute/tensorqtl.git
 $ cd tensorqtl
@@ -40,11 +40,11 @@ tensorQTL can be run from the command line. For options, see `tensorqtl.py --hel
 #### *cis*-QTL mapping
 Phenotype-level summary statistics with empirical p-values:
 ```
-tensorqtl.py ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --mode cis
+python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --mode cis
 ```
 All variant-phenotype associations:
 ```
-tensorqtl.py ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --mode cis_nominal
+python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --mode cis_nominal
 ```
 This will generate a [parquet](https://parquet.apache.org/) file for each chromosome. The output can easily be read using `pandas`:
 ```
@@ -54,6 +54,6 @@ df = pd.read_parquet(file_name)
 
 #### *trans*-QTL mapping
 ```
-tensorqtl.py ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --mode trans
+python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} --covariates ${covariates_file} --mode trans
 ```
 For *trans*-QTL mapping, tensorQTL generates sparse output by default (associations with p-value < 1e-5). *cis*-associations are filtered out. The output is written in parquet format, with four columns: phenotype_id, variant_id, pval, maf

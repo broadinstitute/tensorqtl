@@ -1,0 +1,2 @@
+import tensorqtl
+tensorqtl.main()
