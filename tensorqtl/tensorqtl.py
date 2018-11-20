@@ -216,6 +216,7 @@ def beta_log_likelihood(x, shape1, shape2):
     logbeta = loggamma(shape1) + loggamma(shape2) - loggamma(shape1+shape2)
     return (1.0-shape1)*np.sum(np.log(x)) + (1.0-shape2)*np.sum(np.log(1.0-x)) + len(x)*logbeta
 
+
 def calculate_beta_approx_pval(r2_perm, r2_nominal, dof, tol=1e-4, return_minp=False):
     """
       r2_nominal: nominal max. r2 (scalar or array)
@@ -301,14 +302,33 @@ def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, num_var, dof, n_s
     ]))
 
 
-def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, nperm=10000, logger=None):
+def _process_group_permutations(buf):
+    """
+    Merge results for grouped phenotypes
+
+    buf: [r_nom, s_r, var_ix, r2_perm, g, ng, nid]
+    """
+    # select phenotype with strongest nominal association
+    max_ix = np.argmax(np.abs([b[0] for b in buf]))
+    r_nom, s_r, var_ix = buf[max_ix][:3]
+    g, ng, nid = buf[max_ix][4:]
+    # select best phenotype correlation for each permutation
+    r2_perm = np.max([b[3] for b in buf], 0)
+    return r_nom, s_r, var_ix, r2_perm, g, ng, nid
+
+
+def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s=None, nperm=10000, logger=None):
     """Run cis-QTL mapping"""
+    assert np.all(phenotype_df.columns==covariates_df.index)
     if logger is None:
         logger = SimpleLogger()
 
     logger.write('cis-QTL mapping: empirical p-values for phenotypes')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
     logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
+    if group_s is not None:
+        logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
+        group_dict = group_s.to_dict()
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(plink_reader.bed.shape[0]))
 
@@ -340,17 +360,55 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, nperm=1
             r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t = calculate_cis_permutations(
                 next_genotypes, next_range, next_phenotype, covariates_t, permutation_ix_t)
 
-            for i in range(1, igc.n_phenotypes+1):
-                r_nom, s_r, var_ix, r2_perm, g, ng, nid = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
+            if group_s is None:
+                for i in range(1, igc.n_phenotypes+1):
+                    r_nom, s_r, var_ix, r2_perm, g, ng, nid = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
 
-                # post-processing (on CPU)
-                res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
+                    # post-processing (on CPU)
+                    res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
+                    res_s.name = nid.decode()
+                    res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
+                    res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                    res_df.append(res_s)
+                    print('\r  * computing permutations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
+                print()
+            else:
+                n_groups = len(igc.phenotype_df.index.map(group_dict).unique())
+                buf = []
+                processed_groups = 0
+                previous_group = None
+                for i in range(0, igc.n_phenotypes):
+                    group_id = group_dict[igc.phenotype_df.index[i]]
+                    ires = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
+                    if (group_id != previous_group and len(buf)>0):  # new group, process previous
+                        # post-processing (on CPU)
+                        r_nom, s_r, var_ix, r2_perm, g, ng, nid = _process_group_permutations(buf)
+                        res_s = tensorqtl.process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
+                        res_s.name = nid.decode()
+                        res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
+                        res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                        res_s['group_id'] = group_id
+                        res_s['group_size'] = len(buf)
+                        res_df.append(res_s)
+                        processed_groups += 1
+                        print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='')
+                        # reset
+                        buf = [ires]
+                    else:
+                        buf.append(ires)
+                    previous_group = group_id
+                # process last group
+                r_nom, s_r, var_ix, r2_perm, g, ng, nid = _process_group_permutations(buf)
+                res_s = tensorqtl.process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
                 res_s.name = nid.decode()
                 res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
                 res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                res_s['group_id'] = group_id
+                res_s['group_size'] = len(buf)
                 res_df.append(res_s)
-                print('\r  * computing permutations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
-            print()
+                processed_groups += 1
+                print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='\n')
+
     res_df = pd.concat(res_df, axis=1).T
     res_df.index.name = 'phenotype_id'
     logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
@@ -674,7 +732,9 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write('done.')
 
 
-def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05, batch_size=20000, logger=None, verbose=True):
+def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
+              return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05,
+              batch_size=20000, logger=None, verbose=True):
     """Run trans-QTL mapping from genotypes in memory"""
     if logger is None:
         logger = SimpleLogger(verbose=verbose)
@@ -713,12 +773,16 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None, retu
         r2_threshold = None
 
     if interaction_s is None:
-        genotypes, phenotypes, covariates = initialize_data(phenotype_df, covariates_df, batch_size=batch_size, dtype=tf.float32)
+        genotypes, phenotypes, covariates = initialize_data(phenotype_df, covariates_df,
+                                                            batch_size=batch_size, dtype=tf.float32)
         # with tf.device('/gpu:0'):
-        p_values, maf = calculate_association(genotypes, phenotypes, covariates, return_sparse=return_sparse, r2_threshold=r2_threshold)
+        p_values, maf = calculate_association(genotypes, phenotypes, covariates,
+                                              return_sparse=return_sparse, r2_threshold=r2_threshold)
     else:
-        genotypes, phenotypes, covariates, interaction = initialize_data(phenotype_df, covariates_df, batch_size=batch_size, interaction_s=interaction_s)
-        p_values, maf = calculate_association(genotypes, phenotypes, covariates, interaction_t=interaction, return_sparse=return_sparse, r2_threshold=r2_threshold)
+        genotypes, phenotypes, covariates, interaction = initialize_data(phenotype_df, covariates_df,
+                                                                         batch_size=batch_size, interaction_s=interaction_s)
+        p_values, maf = calculate_association(genotypes, phenotypes, covariates, interaction_t=interaction,
+                                              return_sparse=return_sparse, r2_threshold=r2_threshold)
 
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
@@ -941,6 +1005,7 @@ def main():
     parser.add_argument('--permutations', default=10000, help='Number of permutations. Default: 10000')
     parser.add_argument('--interaction', default=None, type=str, help='Interaction term')
     parser.add_argument('--cis_results', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
+    parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
     parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >=maf_threshold. Default: 0')
@@ -985,10 +1050,24 @@ def main():
     else:
         maf_threshold = args.maf_threshold
 
+    if args.phenotype_groups is not None:
+        group_s = pd.read_csv(args.phenotype_groups, sep='\t', index_col=0, header=None, squeeze=True)
+        # verify sort order
+        previous_group = ''
+        parsed_groups = 0
+        for i in phenotype_df.index:
+            if group_dict[i]!=previous_group:
+                parsed_groups += 1
+                previous_group = group_dict[i]
+        if not parsed_groups == len(group_s.unique()):
+            raise ValueError('Groups defined in input do not match phenotype file (check sort order).')
+    else:
+        group_s = None
+
     if args.mode.startswith('cis'):
         pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns)
         if args.mode=='cis':
-            res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, nperm=args.permutations, logger=logger)
+            res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl_phenotypes.txt.gz')
             if has_rpy2:
