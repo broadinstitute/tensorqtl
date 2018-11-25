@@ -2,6 +2,7 @@
 import rpy2
 import rpy2.robjects.numpy2ri
 from rpy2.robjects.packages import importr
+from collections import Iterable
 
 
 def p_adjust(p, method='BH'):
@@ -18,6 +19,8 @@ def qvalue(p, lambda_qvalue=None):
     if lambda_qvalue is None:
         q = qvalue.qvalue(rp)
     else:
+        if not isinstance(lambda_qvalue, Iterable):
+            lambda_qvalue = [lambda_qvalue]
         rlambda = rpy2.robjects.vectors.FloatVector(lambda_qvalue)
         q = qvalue.qvalue(rp, **{'lambda':rlambda})
     qval = rpy2.robjects.numpy2ri.ri2py(q.rx2('qvalues'))
@@ -32,6 +35,8 @@ def pi0est(p, lambda_qvalue=None):
     if lambda_qvalue is None:
         pi0res = qvalue.pi0est(rp)
     else:
+        if not isinstance(lambda_qvalue, Iterable):
+            lambda_qvalue = [lambda_qvalue]
         rlambda = rpy2.robjects.vectors.FloatVector(lambda_qvalue)
         pi0res = qvalue.pi0est(rp, rlambda)
     pi0 = rpy2.robjects.numpy2ri.ri2py(pi0res.rx2('pi0'))

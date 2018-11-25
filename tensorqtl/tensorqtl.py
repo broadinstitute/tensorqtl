@@ -580,7 +580,6 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None):
     pthreshold = (lb+ub)/2
     print('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
     res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
-    return res_df
 
 
 def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
