@@ -71,6 +71,20 @@ output_dtype_dict = {
 #------------------------------------------------------------------------------
 #  Core functions for mapping associations on GPU
 #------------------------------------------------------------------------------
+class Residualizer(object):
+    def __init__(self, C_t):
+        # center and orthogonalize
+        self.Q_t, _ = tf.qr(C_t - tf.reduce_mean(C_t, 0), full_matrices=False, name='qr')
+
+    def transform(self, M_t, center=True):
+        """Residualize rows of M wrt columns of C"""
+        if center:
+            M0_t = M_t - tf.reduce_mean(M_t, axis=1, keepdims=True)
+        else:
+            M0_t = M_t
+        return M_t - tf.matmul(tf.matmul(M0_t, self.Q_t), self.Q_t, transpose_b=True)  # keep original mean
+
+
 def residualize(M_t, C_t):
     """Residualize M wrt columns of C"""
 
@@ -94,7 +108,7 @@ def center_normalize(M_t, axis=0):
 
 def calculate_maf(genotype_t):
     """Calculate minor allele frequency"""
-    af_t = tf.reduce_sum(genotype_t,1) / (2*genotype_t.shape[1].value)
+    af_t = tf.reduce_sum(genotype_t,1) / (2*tf.cast(tf.shape(genotype_t)[1], tf.float32))
     return tf.where(af_t>0.5, 1-af_t, af_t)
 
 
@@ -154,11 +168,14 @@ def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0):
         return pval_t
 
 
-def _interaction_assoc_row(genotype_t, phenotype_t, icovariates_t):
-    """genotype_t must be a 1D tensor"""
+def _interaction_assoc_row(genotype_t, phenotype_t, icovariates_t, return_sd=False):
+    """
+    genotype_t must be a 1D tensor
+    icovariates_t: [covariates_t, interaction_t]
+    """
     gi_covariates_t = tf.concat([icovariates_t, tf.reshape(genotype_t, [-1,1])], axis=1)
     ix_t = tf.reshape(tf.multiply(genotype_t, icovariates_t[:,-1]), [1,-1])  # must be 1 x N
-    return tf.pow(_calculate_corr(ix_t, phenotype_t, gi_covariates_t)[0], 2)
+    return _calculate_corr(ix_t, phenotype_t, gi_covariates_t, return_sd=return_sd)
 
 
 def calculate_association(genotype_t, phenotype_t, covariates_t, interaction_t=None, return_sparse=True, r2_threshold=None):
@@ -169,8 +186,8 @@ def calculate_association(genotype_t, phenotype_t, covariates_t, interaction_t=N
         r2_t = tf.pow(_calculate_corr(genotype_t, phenotype_t, covariates_t), 2)
         dof = genotype_t.shape[1].value - 2 - covariates_t.shape[1].value
     else:
-        icovariates_t = tf.concat([covariates_t, tf.reshape(interaction_t, [-1,1])], axis=1)
-        r2_t = tf.map_fn(lambda x: _interaction_assoc_row(x, phenotype_t, icovariates_t), genotype_t, infer_shape=False)
+        icovariates_t = tf.concat([covariates_t, interaction_t], axis=1)
+        r2_t = tf.pow(tf.map_fn(lambda x: _interaction_assoc_row(x, phenotype_t, icovariates_t), genotype_t, infer_shape=False), 2)
         dof = genotype_t.shape[1].value - 4 - covariates_t.shape[1].value
 
     return calculate_pval(r2_t, dof, maf_t, return_sparse=return_sparse, r2_threshold=r2_threshold)
@@ -383,7 +400,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
                     if (group_id != previous_group and len(buf)>0):  # new group, process previous
                         # post-processing (on CPU)
                         r_nom, s_r, var_ix, r2_perm, g, ng, nid = _process_group_permutations(buf)
-                        res_s = tensorqtl.process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
+                        res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
                         res_s.name = nid.decode()
                         res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
                         res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
@@ -399,7 +416,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
                     previous_group = group_id
                 # process last group
                 r_nom, s_r, var_ix, r2_perm, g, ng, nid = _process_group_permutations(buf)
-                res_s = tensorqtl.process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
+                res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
                 res_s.name = nid.decode()
                 res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
                 res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
@@ -644,19 +661,28 @@ def get_significant_pairs(res_df, nominal_prefix, fdr=0.05):
 
 
 def calculate_cis_nominal(genotypes_t, phenotype_t, covariates_t, dof):
-    """Calculate nominal associations"""
-    r_nominal_t, std_ratio_t = _calculate_corr(genotypes_t, tf.reshape(phenotype_t, [1,-1]), covariates_t, return_sd=True)
+    """
+    Calculate nominal associations
+
+    genotypes_t: genotypes x samples
+    phenotype_t: single phenotype
+    covariates_t: covariates matrix, samples x covariates
+    """
+    p = tf.reshape(phenotype_t, [1,-1])
+
+    r_nominal_t, std_ratio_t = _calculate_corr(genotypes_t, p, covariates_t, return_sd=True)
     r2_nominal_t = tf.pow(r_nominal_t, 2)
     pval_t = calculate_pval(r2_nominal_t, dof, maf_t=None, return_sparse=False)
     slope_t = tf.multiply(r_nominal_t, std_ratio_t)
     slope_se_t = tf.divide(tf.abs(slope_t), tf.sqrt(tf.divide(tf.scalar_mul(dof, r2_nominal_t), 1 - r2_nominal_t)))
 
+    # calculate MAF
     n = covariates_t.shape[0].value
     n2 = 2*n
     af_t = tf.reduce_sum(genotypes_t,1) / n2
     ix_t = af_t<=0.5
     maf_t = tf.where(ix_t, af_t, 1-af_t)
-
+    # calculate MA samples and counts
     m = tf.cast(genotypes_t>0.5, tf.float32)
     a = tf.reduce_sum(m, 1)
     b = tf.reduce_sum(tf.cast(genotypes_t<1.5, tf.float32), 1)
@@ -668,7 +694,8 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, covariates_t, dof):
     return pval_t, slope_t, slope_se_t, maf_t, ma_samples_t, ma_count_t
 
 
-def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, prefix, output_dir='.', interaction_s=None, logger=None):
+def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, prefix,
+                    output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -683,18 +710,16 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(plink_reader.bed.shape[0]))
-    if interaction_s is not None:
-        logger.write('  * including interaction term')
-
-    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
 
     # placeholders
     covariates_t = tf.constant(covariates_df.values, dtype=tf.float32)
     genotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
     phenotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
+    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
 
     with tf.Session() as sess:
         # iterate over chromosomes
+        start_time = time.time()
         for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
             logger.write('  Mapping chromosome {}'.format(chrom))
             igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
@@ -703,11 +728,11 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
             dataset = dataset.prefetch(1)
             iterator = dataset.make_one_shot_iterator()
             next_phenotype, next_genotypes, _, next_id = iterator.get_next()
-            pval_t, slope_t, slope_se_t, maf_t, ma_samples_t, ma_count_t = calculate_cis_nominal(next_genotypes, next_phenotype, covariates_t, dof)
+            x = calculate_cis_nominal(next_genotypes, next_phenotype, covariates_t, dof)
 
             chr_res_df = []
             for i in range(1, igc.n_phenotypes+1):
-                pval_nominal, slope, slope_se, maf, ma_samples, ma_count, phenotype_id = sess.run([pval_t, slope_t, slope_se_t, maf_t, ma_samples_t, ma_count_t, next_id])
+                (pval_nominal, slope, slope_se, maf, ma_samples, ma_count), phenotype_id = sess.run([x, next_id])
                 phenotype_id = phenotype_id.decode()
                 r = igc.cis_ranges[phenotype_id]
                 variant_ids = plink_reader.variant_pos[chrom].index[r[0]:r[1]+1]
@@ -727,6 +752,156 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
                 ])))
                 print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
             print()
+            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+            print('  * writing output')
+            pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.variant_phenotype_pairs.{}.parquet'.format(prefix, chrom)))
+    logger.write('done.')
+
+
+def calculate_cis_nominal_interaction(genotypes_t, phenotype_t, interaction_t, dof, residualizer,
+                                      interaction_mask_t=None, maf_threshold_interaction=0.05):
+
+    phenotype_t = tf.reshape(phenotype_t, [1,-1])
+
+    if interaction_mask_t is not None:
+        upper_t = tf.boolean_mask(genotypes_t, interaction_mask_t, axis=1)
+        lower_t = tf.boolean_mask(genotypes_t, ~interaction_mask_t, axis=1)
+        maf_mask_t = ((calculate_maf(upper_t) >= maf_threshold_interaction) &
+                      (calculate_maf(lower_t) >= maf_threshold_interaction))
+        maf_mask_t.set_shape([None])  # required for tf.boolean_mask
+        genotypes_t = tf.boolean_mask(genotypes_t, maf_mask_t)
+        s = tf.shape(genotypes_t)
+        ng = s[0]
+        ns = tf.cast(s[1], tf.float32)
+    else:
+        s = tf.shape(genotypes_t)
+        ng = s[0]
+        ns = tf.cast(s[1], tf.float32)
+        maf_mask_t = tf.ones(ng, dtype=tf.bool)
+
+    g0_t = genotypes_t - tf.reduce_mean(genotypes_t, axis=1, keepdims=True)
+    gi_t = tf.multiply(genotypes_t, interaction_t)
+    gi0_t = gi_t - tf.reduce_mean(gi_t, axis=1, keepdims=True)
+
+    i0_t = interaction_t - tf.reduce_mean(interaction_t)
+    p_t = tf.reshape(phenotype_t, [1,-1])
+    p0_t = p_t - tf.reduce_mean(p_t, axis=1, keepdims=True)
+
+    # residualize
+    g0_t = residualizer.transform(g0_t, center=False)
+    gi0_t = residualizer.transform(gi0_t, center=False)
+    p0_t = residualizer.transform(p0_t, center=False)
+    i0_t = residualizer.transform(i0_t, center=False)
+    i0_t = tf.tile(i0_t, [ng, 1])
+
+    X_t = tf.stack([g0_t, i0_t, gi0_t], axis=2)
+    Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))
+    b_t = tf.matmul(tf.matmul(Xinv, X_t, transpose_b=True), tf.tile(tf.reshape(p0_t, [1,1,-1]), [ng,1,1]), transpose_b=True)
+
+    r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t
+    rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
+    Cx = Xinv * tf.reshape(rss_t, [-1,1,1]) / dof
+
+    b_se_t = tf.sqrt(tf.matrix_diag_part(Cx))
+    b_t = tf.squeeze(b_t)
+    tstat = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))
+    # weird tf bug? without cast/copy, divide appears to modify b_se_t??
+
+    tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
+    pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
+
+    # calculate MAF
+    n2 = 2*ns
+    af_t = tf.reduce_sum(genotypes_t,1) / n2
+    ix_t = af_t<=0.5
+    maf_t = tf.where(ix_t, af_t, 1-af_t)
+    # calculate MA samples and counts
+    m = tf.cast(genotypes_t>0.5, tf.float32)
+    a = tf.reduce_sum(m, 1)
+    b = tf.reduce_sum(tf.cast(genotypes_t<1.5, tf.float32), 1)
+    ma_samples_t = tf.where(ix_t, a, b)
+    m = tf.multiply(m, genotypes_t)
+    a = tf.reduce_sum(m, 1)
+    ma_count_t = tf.where(ix_t, a, n2-a)
+
+    return pval_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t, maf_mask_t
+
+
+def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
+                                prefix, maf_threshold_interaction=0.05, output_dir='.', logger=None):
+    """
+    cis-QTL mapping: nominal associations for all variant-phenotype pairs
+
+    Association results for each chromosome are written to parquet files
+    in the format <output_dir>/<prefix>.variant_phenotype_pairs.<chr>.parquet
+    """
+    if logger is None:
+        logger = SimpleLogger()
+
+    logger.write('cis-QTL mapping: nominal associations for all variant-phenotype pairs')
+    logger.write('  * {} samples'.format(phenotype_df.shape[1]))
+    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
+    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+    logger.write('  * {} variants'.format(plink_reader.bed.shape[0]))
+    logger.write('  * including interaction term')
+
+    # placeholders
+    covariates_t = tf.constant(covariates_df.values, dtype=tf.float32)
+    genotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
+    phenotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
+
+    dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
+    interaction_t = tf.constant(interaction_s.values.reshape(1,-1), dtype=tf.float32)  # 1 x n
+    interaction_mask_t = tf.constant(interaction_s >= interaction_s.median())
+    residualizer = Residualizer(covariates_t)
+
+    with tf.Session() as sess:
+        # iterate over chromosomes
+        start_time = time.time()
+        for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
+            logger.write('  Mapping chromosome {}'.format(chrom))
+            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+
+            dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
+            dataset = dataset.prefetch(1)
+            iterator = dataset.make_one_shot_iterator()
+            next_phenotype, next_genotypes, _, next_id = iterator.get_next()
+
+            x = calculate_cis_nominal_interaction(next_genotypes, next_phenotype, interaction_t, dof, residualizer,
+                                      interaction_mask_t=interaction_mask_t, maf_threshold_interaction=0.05)
+
+            chr_res_df = []
+            for i in range(1, igc.n_phenotypes+1):
+                (pval, b, b_se, maf, ma_samples, ma_count, maf_mask), phenotype_id = sess.run([x, next_id])
+
+                phenotype_id = phenotype_id.decode()
+                r = igc.cis_ranges[phenotype_id]
+                variant_ids = plink_reader.variant_pos[chrom].index[r[0]:r[1]+1]
+                tss_distance = np.int32(plink_reader.variant_pos[chrom].values[r[0]:r[1]+1] - igc.phenotype_tss[phenotype_id])
+                if maf_mask is not None:
+                    variant_ids = variant_ids[maf_mask]
+                    tss_distance = tss_distance[maf_mask]
+                nv = len(variant_ids)
+                chr_res_df.append(pd.DataFrame(OrderedDict([
+                    ('phenotype_id', [phenotype_id]*nv),
+                    ('variant_id', variant_ids),
+                    ('tss_distance', tss_distance),
+                    ('maf', maf),
+                    ('ma_samples', np.int32(ma_samples)),
+                    ('ma_count', np.int32(ma_count)),
+                    ('pval_g', pval[:,0]),
+                    ('b_g', b[:,0]),
+                    ('b_g_se', b_se[:,0]),
+                    ('pval_i', pval[:,1]),
+                    ('b_i', b[:,1]),
+                    ('b_i_se', b_se[:,1]),
+                    ('pval_gi', pval[:,2]),
+                    ('b_gi', b[:,2]),
+                    ('b_gi_se', b_se[:,2]),
+                ])))
+                print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
+            print()
+            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
             print('  * writing output')
             pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.variant_phenotype_pairs.{}.parquet'.format(prefix, chrom)))
     logger.write('done.')
@@ -1009,6 +1184,7 @@ def main():
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
     parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >=maf_threshold. Default: 0')
+    parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=50000, help='Batch size. Reduce this if encountering OOM errors.')
@@ -1074,8 +1250,13 @@ def main():
                 res_df = calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
             res_df.to_csv(out_file, sep='\t', float_format='%.6g', compression='gzip')
         elif args.mode=='cis_nominal':
-            map_cis_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
-                            output_dir=args.output_dir, interaction_s=interaction_s, logger=logger)
+            if interaction_s is None:
+                map_cis_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
+                                output_dir=args.output_dir, logger=logger)
+            else:
+                map_cis_nominal_interaction(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
+                                args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
+                                output_dir=args.output_dir, logger=logger)
         elif args.mode=='cis_independent':
             summary_df = pd.read_csv(args.cis_results, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
