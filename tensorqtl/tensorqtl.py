@@ -1188,7 +1188,7 @@ def main():
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=50000, help='Batch size. Reduce this if encountering OOM errors.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
-    parser.add_argument('--qvalue_lambda', default=None, help='lambda parameter for pi0est in qvalue.')
+    parser.add_argument('--qvalue_lambda', default=None, type=np.float64, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('-o', '--output_dir', default='.', help='Output directory')
     args = parser.parse_args()
 
@@ -1228,6 +1228,7 @@ def main():
     if args.phenotype_groups is not None:
         group_s = pd.read_csv(args.phenotype_groups, sep='\t', index_col=0, header=None, squeeze=True)
         # verify sort order
+        group_dict = group_s.to_dict()
         previous_group = ''
         parsed_groups = 0
         for i in phenotype_df.index:
@@ -1245,7 +1246,7 @@ def main():
             res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl_phenotypes.txt.gz')
-            if has_rpy2:
+            if has_rpy2 and group_s is None:
                 res_df = calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
             res_df.to_csv(out_file, sep='\t', float_format='%.6g', compression='gzip')
         elif args.mode=='cis_nominal':
