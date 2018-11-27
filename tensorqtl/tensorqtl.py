@@ -1178,7 +1178,7 @@ def main():
     parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
     parser.add_argument('--permutations', default=10000, help='Number of permutations. Default: 10000')
     parser.add_argument('--interaction', default=None, type=str, help='Interaction term')
-    parser.add_argument('--cis_results', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
+    parser.add_argument('--cis_output', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
     parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
@@ -1195,7 +1195,7 @@ def main():
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
     # check inputs
-    if args.mode=='cis_independent' and args.cis_results is None:
+    if args.mode=='cis_independent' and args.cis_output is None:
         raise ValueError("Output from 'cis' mode must be provided.")
 
     logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.log'))
@@ -1257,7 +1257,7 @@ def main():
                                 args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
                                 output_dir=args.output_dir, logger=logger)
         elif args.mode=='cis_independent':
-            summary_df = pd.read_csv(args.cis_results, sep='\t', index_col=0)
+            summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
             res_df = map_cis_independent(pr, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
                                          fdr=args.fdr, nperm=args.permutations, logger=logger)
@@ -1276,8 +1276,8 @@ def main():
                   return_sparse=return_sparse, pval_threshold=pval_threshold,
                   maf_threshold=maf_threshold, batch_size=args.batch_size, logger=logger)
 
-        logger.write('  * filtering out cis-QTLs')
-        pval_df = filter_cis(pval_df, tss_dict, window=1000000)
+        logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
+        pval_df = filter_cis(pval_df, tss_dict, window=5000000)
 
         logger.write('  * writing output')
         if not args.output_text:
