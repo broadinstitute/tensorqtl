@@ -1247,7 +1247,7 @@ def main():
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl_phenotypes.txt.gz')
             if has_rpy2 and group_s is None:
-                res_df = calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
+                calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
             res_df.to_csv(out_file, sep='\t', float_format='%.6g', compression='gzip')
         elif args.mode=='cis_nominal':
             if interaction_s is None:
