@@ -217,7 +217,15 @@ class PlinkReader(object):
             _impute_mean(g, verbose=verbose)
         return g, c.set_index('snp')['pos']
 
-    def get_genotypes(self, impute=False, verbose=False):
+    def get_genotypes(self, variant_ids, impute=False, verbose=False):
+        """Load genotypes corresponding to variant IDs"""
+        c = self.bim[self.bim['snp'].isin(variant_ids)]
+        g = self.bed[c.i.values, :].compute()
+        if impute:
+            _impute_mean(g, verbose=verbose)
+        return g, c.set_index('snp')['pos']
+
+    def get_all_genotypes(self, impute=False, verbose=False):
         """Load all genotypes into memory (impute=True should only be used for float formats)"""
         g = self.bed.compute()
         if impute:
