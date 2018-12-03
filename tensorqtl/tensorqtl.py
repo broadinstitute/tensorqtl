@@ -113,7 +113,7 @@ def calculate_maf(genotype_t):
 
 
 def _calculate_corr(genotype_t, phenotype_t, covariates_t, return_sd=False):
-    """Calculate squared correlation between normalized residual genotypes and phenotypes"""
+    """Calculate correlation between normalized residual genotypes and phenotypes"""
     # residualize
     genotype_res_t = residualize(genotype_t, covariates_t)  # variants x samples
     phenotype_res_t = residualize(phenotype_t, covariates_t)  # phenotypes x samples
@@ -135,7 +135,7 @@ def _calculate_corr(genotype_t, phenotype_t, covariates_t, return_sd=False):
 
 def _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, maf_threshold=0.05):
     maf_t = calculate_maf(genotypes_t)
-    ix = tf.where(maf_t>maf_threshold)
+    ix = tf.where(maf_t>=maf_threshold)
 
     r2_nom_t = tf.pow(tf.gather(_calculate_corr(genotypes_t, phenotypes_t, covariates_t), ix), 2)
     r2_emp_t = tf.pow(tf.gather(_calculate_corr(genotypes_t, permutations_t, covariates_t), ix), 2)
@@ -234,9 +234,8 @@ def beta_log_likelihood(x, shape1, shape2):
     return (1.0-shape1)*np.sum(np.log(x)) + (1.0-shape2)*np.sum(np.log(1.0-x)) + len(x)*logbeta
 
 
-def calculate_beta_approx_pval(r2_perm, r2_nominal, dof, tol=1e-4, return_minp=False):
+def fit_beta_parameters(r2_perm, dof, tol=1e-4, return_minp=False):
     """
-      r2_nominal: nominal max. r2 (scalar or array)
       r2_perm:    array of max. r2 values from permutations
       dof:        degrees of freedom
     """
@@ -253,13 +252,22 @@ def calculate_beta_approx_pval(r2_perm, r2_nominal, dof, tol=1e-4, return_minp=F
     beta_shape2 = beta_shape1 * (1/mean - 1)
     res = scipy.optimize.minimize(lambda s: beta_log_likelihood(pval, s[0], s[1]), [beta_shape1, beta_shape2], method='Nelder-Mead', tol=tol)
     beta_shape1, beta_shape2 = res.x
+    if return_minp:
+        return beta_shape1, beta_shape2, true_dof, pval
+    else:
+        return beta_shape1, beta_shape2, true_dof
 
+
+def calculate_beta_approx_pval(r2_perm, r2_nominal, dof, tol=1e-4):
+    """
+      r2_nominal: nominal max. r2 (scalar or array)
+      r2_perm:    array of max. r2 values from permutations
+      dof:        degrees of freedom
+    """
+    beta_shape1, beta_shape2, true_dof = fit_beta_parameters(r2_perm, dof, tol)
     pval_true_dof = pval_from_corr(r2_nominal, true_dof)
     pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
-    if return_minp:
-        return pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof, pval
-    else:
-        return pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof
+    return pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof
 
 #------------------------------------------------------------------------------
 #  Top-level functions for running cis-/trans-QTL mapping
@@ -1021,6 +1029,144 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
 
     logger.write('done.')
     return pval_df
+
+
+def map_trans_permutations(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
+                           split_chr=True, pval_df=None, nperms=10000, maf_threshold=0.05,
+                           batch_size=20000, logger=None):
+    if logger is None:
+        logger = SimpleLogger()
+    assert np.all(phenotype_df.columns==covariates_df.index)
+
+    if pval_df is not None:
+        assert 'gene_chr' in pval_df and 'pval' in pval_df and np.all(pval_df.index==phenotype_df.index)
+
+    variant_ids = plink_reader.bim['snp'].tolist()
+    n_variants = len(variant_ids)
+    n_samples = phenotype_df.shape[1]
+
+    logger.write('trans-QTL mapping (FDR)')
+    logger.write('  * {} samples'.format(n_samples))
+    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
+    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+    logger.write('  * {} variants'.format(n_variants))
+
+    # generate permutations
+    q = stats.norm.ppf(np.arange(1,n_samples+1)/(n_samples+1))
+    qv = np.tile(q,[nperms,1])
+    for i in np.arange(nperms):
+        np.random.shuffle(qv[i,:])
+    permutations_t = tf.constant(qv, dtype=tf.float32)
+    permutations_t = tf.reshape(permutations_t, shape=[-1, n_samples])
+
+    # index of VCF samples corresponding to phenotypes
+    ix_t = tensorqtl.get_sample_indexes(plink_reader.fam['iid'].tolist(), phenotype_df)
+
+    genotypes_t, phenotypes_t, covariates_t = initialize_data(phenotype_df, covariates_df, batch_size=batch_size, dtype=tf.float32)
+    max_r2_nominal_t, max_r2_permuted_t = _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, maf_threshold=maf_threshold)
+
+    init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+
+    start_time = time.time()
+    chr_max_r2_nominal = OrderedDict()
+    chr_max_r2_empirical = OrderedDict()
+    print('  Mapping batches')
+    with tf.Session() as sess:
+        sess.run(init_op)
+
+        # for chrom in plink_reader.bim['chrom'].unique():
+        for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
+
+            genotypes, variant_pos = plink_reader.get_region(chrom, verbose=True)
+            ggt = genotypeio.GenotypeGeneratorTrans(genotypes, batch_size=batch_size, dtype=np.float32)
+            dataset_genotypes = tf.data.Dataset.from_generator(ggt.generate_data, output_types=tf.float32)
+            dataset_genotypes = dataset_genotypes.prefetch(10)
+            iterator = dataset_genotypes.make_one_shot_iterator()
+            next_element = iterator.get_next()
+            next_element = tf.gather(next_element, ix_t, axis=1)
+
+            nominal_list = []
+            perms_list = []
+            for i in range(1, ggt.num_batches+1):
+                sys.stdout.write('\r  * {}: processing batch {}/{}  '.format(chrom, i, ggt.num_batches))
+                sys.stdout.flush()
+
+                g_iter = sess.run(next_element)
+                max_r2_nominal, max_r2_permuted = sess.run([max_r2_nominal_t, max_r2_permuted_t], feed_dict={genotypes_t:g_iter})
+                nominal_list.append(max_r2_nominal)
+                perms_list.append(max_r2_permuted)
+
+            chr_max_r2_nominal[chrom] = np.max(np.array(nominal_list), 0)
+            chr_max_r2_empirical[chrom] = np.max(np.array(perms_list), 0)
+
+    logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+
+    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
+
+    chr_max_r2_nominal = pd.DataFrame(chr_max_r2_nominal, index=phenotype_df.index)
+    chr_max_r2_empirical = pd.DataFrame(chr_max_r2_empirical)
+
+    if split_chr:
+        # compute leave-one-out max
+        max_r2_nominal = OrderedDict()
+        max_r2_empirical = OrderedDict()
+        for c in chr_max_r2_nominal:
+            max_r2_nominal[c] = chr_max_r2_nominal[np.setdiff1d(chr_max_r2_nominal.columns, c)].max(1)
+            max_r2_empirical[c] = chr_max_r2_empirical[np.setdiff1d(chr_max_r2_empirical.columns, c)].max(1)
+        max_r2_nominal = pd.DataFrame(max_r2_nominal, index=phenotype_df.index)
+        max_r2_empirical = pd.DataFrame(max_r2_empirical)  # nperms x chrs
+
+        # nominal p-value (sanity check, matches pval_df['pval'])
+        r2_nominal = max_r2_nominal.lookup(pval_df['gene_id'], pval_df['gene_chr'])
+        tstat = np.sqrt( dof*r2_nominal / (1-r2_nominal) )
+        minp_nominal = pd.Series(2*stats.t.cdf(-np.abs(tstat), dof), index=pval_df['gene_id'])
+
+        # empirical p-values
+        tstat = np.sqrt( dof*max_r2_empirical / (1-max_r2_empirical) )
+        minp_empirical = pd.DataFrame(2*stats.t.cdf(-np.abs(tstat), dof), columns=tstat.columns)
+        pval_perm = np.array([(np.sum(minp_empirical[chrom]<=p)+1)/(nperms+1) for p, chrom in zip(pval_df['pval'], pval_df['gene_chr'])])
+
+        beta_shape1 = {}
+        beta_shape2 = {}
+        true_dof = {}
+        for c in max_r2_empirical:
+            beta_shape1[c], beta_shape2[c], true_dof[c] = fit_beta_parameters(max_r2_empirical[c], dof)
+        beta_shape1 = [beta_shape1[c] for c in pval_df['gene_chr']]
+        beta_shape2 = [beta_shape2[c] for c in pval_df['gene_chr']]
+        true_dof = [true_dof[c] for c in pval_df['gene_chr']]
+
+        pval_true_dof = pval_from_corr(r2_nominal, true_dof)
+        pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
+
+    else:
+        max_r2_nominal = max_r2_nominal.max(axis=1)
+        tstat = np.sqrt( dof*max_r2_nominal / (1-max_r2_nominal) )
+        minp_nominal = 2*stats.t.cdf(-np.abs(tstat), dof)
+
+        max_r2_empirical = max_r2_empirical.max(axis=1)
+        tstat = np.sqrt( dof*max_r2_empirical / (1-max_r2_empirical) )
+        minp_empirical = 2*stats.t.cdf(-np.abs(tstat), dof)
+
+        pval_perm = np.array([(np.sum(minp_empirical<=p)+1)/(nperms+1) for p in minp_nominal])
+
+        # calculate beta p-values for each phenotype:
+        pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof, minp_vec = calculate_beta_approx_pval(max_r2_empirical, max_r2_nominal, dof, return_minp=True)
+
+
+    fit_df = pd.DataFrame(OrderedDict([
+        ('beta_shape1', beta_shape1),
+        ('beta_shape2', beta_shape2),
+        ('true_df', true_dof),
+        ('min_pval_true_df', pval_true_dof),
+        ('min_pval_nominal', minp_nominal),
+        ('pval_perm', pval_perm),
+        ('pval_beta', pval_beta),
+    ]), index=phenotype_df.index)
+
+    if split_chr:
+        return fit_df
+    else:
+        return fit_df, minp_vec
 
 
 def map_trans_tfrecord(vcf_tfrecord, phenotype_df, covariates_df, interaction_s=None, return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05, batch_size=50000, logger=None):

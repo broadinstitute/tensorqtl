@@ -236,7 +236,7 @@ class PlinkReader(object):
 def load_genotypes(plink_prefix_path, select_samples=None, dtype=np.int8):
     pr = PlinkReader(plink_prefix_path, select_samples=select_samples, dtype=dtype)
     print('Loading genotypes ... ', end='', flush=True)
-    df = pd.DataFrame(pr.get_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
+    df = pd.DataFrame(pr.get_all_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
     print('done.', flush=True)
     return df
 
@@ -307,7 +307,7 @@ class GenotypeGeneratorTrans(object):
         
         Inputs:
           genotypes:  Numpy array of genotypes (variants x samples)
-                      (see PlinkReader.get_genotypes())
+                      (see PlinkReader.get_all_genotypes())
           batch_size: Batch size for GPU processing
           dtype:      Batch dtype (default: np.float32).
                       By default genotypes are stored as np.int8.
