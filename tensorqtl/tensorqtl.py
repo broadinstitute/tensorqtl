@@ -835,7 +835,7 @@ def calculate_cis_nominal_interaction(genotypes_t, phenotype_t, interaction_t, d
 
 
 def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
-                                prefix, maf_threshold_interaction=0.05, output_dir='.', logger=None):
+                                prefix, maf_threshold_interaction=0.05, best_only=False, output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -865,6 +865,7 @@ def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, co
     with tf.Session() as sess:
         # iterate over chromosomes
         start_time = time.time()
+        best_assoc = []
         for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
             logger.write('  Mapping chromosome {}'.format(chrom))
             igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
@@ -889,7 +890,7 @@ def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, co
                     variant_ids = variant_ids[maf_mask]
                     tss_distance = tss_distance[maf_mask]
                 nv = len(variant_ids)
-                chr_res_df.append(pd.DataFrame(OrderedDict([
+                df = pd.DataFrame(OrderedDict([
                     ('phenotype_id', [phenotype_id]*nv),
                     ('variant_id', variant_ids),
                     ('tss_distance', tss_distance),
@@ -905,12 +906,22 @@ def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, co
                     ('pval_gi', pval[:,2]),
                     ('b_gi', b[:,2]),
                     ('b_gi_se', b_se[:,2]),
-                ])))
+                ]))
+                if best_only:
+                    best_assoc.append(df.loc[df['pval_gi'].idxmin()])
+                else:
+                    chr_res_df.append(df)
                 print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
             print()
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-            print('  * writing output')
-            pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.variant_phenotype_pairs.{}.parquet'.format(prefix, chrom)))
+            if not best_only:
+                print('  * writing output')
+                pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.variant_phenotype_pairs.{}.parquet'.format(prefix, chrom)))
+        if best_only:
+            pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').to_csv(
+                    os.path.join(output_dir, '{}.variant_phenotype_pairs.top_associations.txt.gz'.format(prefix)),
+                    sep='\t', float_format='%.6g', compression='gzip'
+                )
     logger.write('done.')
 
 
@@ -1331,6 +1342,7 @@ def main():
     parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >=maf_threshold. Default: 0')
     parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
+    parser.add_argument('--best_only', action='store_true', help='Produce output only for the top association/phenotype')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=50000, help='Batch size. Reduce this if encountering OOM errors.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
@@ -1402,7 +1414,7 @@ def main():
             else:
                 map_cis_nominal_interaction(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
                                 args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
-                                output_dir=args.output_dir, logger=logger)
+                                best_only=args.best_only, output_dir=args.output_dir, logger=logger)
         elif args.mode=='cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
