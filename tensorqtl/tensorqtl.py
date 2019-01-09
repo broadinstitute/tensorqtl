@@ -1043,25 +1043,34 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     return pval_df
 
 
-def map_trans_permutations(plink_reader, phenotype_df, covariates_df,
+def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
                            split_chr=True, pval_df=None, nperms=10000, maf_threshold=0.05,
                            batch_size=20000, logger=None):
     """
-    Warning: this assumes that all phenotypes are normally distributed,
+    Warning: this function requires that all phenotypes are normally distributed,
              e.g., inverse normal transformed
     """
     if logger is None:
         logger = SimpleLogger()
     assert np.all(phenotype_df.columns==covariates_df.index)
 
-    if pval_df is not None:
-        assert 'pval' in pval_df and np.all(pval_df.index==phenotype_df.index)
     if split_chr:
-        assert 'phenotype_chr' in pval_df
+        plink_reader = genotype_input
+        # assert isinstance(plink_reader, genotypeio.PlinkReader)
+        assert pval_df is not None and 'phenotype_chr' in pval_df and 'pval' in pval_df and np.all(pval_df.index==phenotype_df.index)
+        variant_ids = plink_reader.bim['snp'].tolist()
+        # index of VCF samples corresponding to phenotypes
+        ix_t = get_sample_indexes(plink_reader.fam['iid'].tolist(), phenotype_df)
+    else:
+        genotype_df = genotype_input
+        assert isinstance(genotype_df, pd.DataFrame)
+        variant_ids = genotype_df.index.tolist()
+        # index of VCF samples corresponding to phenotypes
+        ix_t = get_sample_indexes(genotype_df.columns.tolist(), phenotype_df)
 
-    variant_ids = plink_reader.bim['snp'].tolist()
     n_variants = len(variant_ids)
     n_samples = phenotype_df.shape[1]
+    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
 
     logger.write('trans-QTL mapping (FDR)')
     logger.write('  * {} samples'.format(n_samples))
@@ -1077,52 +1086,45 @@ def map_trans_permutations(plink_reader, phenotype_df, covariates_df,
     permutations_t = tf.constant(qv, dtype=tf.float32)
     permutations_t = tf.reshape(permutations_t, shape=[-1, n_samples])
 
-    # index of VCF samples corresponding to phenotypes
-    ix_t = tensorqtl.get_sample_indexes(plink_reader.fam['iid'].tolist(), phenotype_df)
-
     genotypes_t, phenotypes_t, covariates_t = initialize_data(phenotype_df, covariates_df, batch_size=batch_size, dtype=tf.float32)
     max_r2_nominal_t, max_r2_permuted_t = _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, maf_threshold=maf_threshold)
-
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
-    start_time = time.time()
-    chr_max_r2_nominal = OrderedDict()
-    chr_max_r2_empirical = OrderedDict()
-    print('  Mapping batches')
-    with tf.Session() as sess:
-        sess.run(init_op)
-
-        for chrom in plink_reader.bim['chrom'].unique():
-            genotypes, variant_pos = plink_reader.get_region(chrom, verbose=True)
-            ggt = genotypeio.GenotypeGeneratorTrans(genotypes, batch_size=batch_size, dtype=np.float32)
-            dataset_genotypes = tf.data.Dataset.from_generator(ggt.generate_data, output_types=tf.float32)
-            dataset_genotypes = dataset_genotypes.prefetch(10)
-            iterator = dataset_genotypes.make_one_shot_iterator()
-            next_element = iterator.get_next()
-            next_element = tf.gather(next_element, ix_t, axis=1)
-
-            nominal_list = []
-            perms_list = []
-            for i in range(1, ggt.num_batches+1):
-                sys.stdout.write('\r  * {}: processing batch {}/{}  '.format(chrom, i, ggt.num_batches))
-                sys.stdout.flush()
-
-                g_iter = sess.run(next_element)
-                max_r2_nominal, max_r2_permuted = sess.run([max_r2_nominal_t, max_r2_permuted_t], feed_dict={genotypes_t:g_iter})
-                nominal_list.append(max_r2_nominal)
-                perms_list.append(max_r2_permuted)
-
-            chr_max_r2_nominal[chrom] = np.max(np.array(nominal_list), 0)
-            chr_max_r2_empirical[chrom] = np.max(np.array(perms_list), 0)
-
-    logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-
-    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
-
-    chr_max_r2_nominal = pd.DataFrame(chr_max_r2_nominal, index=phenotype_df.index)
-    chr_max_r2_empirical = pd.DataFrame(chr_max_r2_empirical)
-
     if split_chr:
+        start_time = time.time()
+        chr_max_r2_nominal = OrderedDict()
+        chr_max_r2_empirical = OrderedDict()
+        print('  Mapping batches')
+        with tf.Session() as sess:
+            sess.run(init_op)
+
+            for chrom in plink_reader.bim['chrom'].unique():
+                genotypes, variant_pos = plink_reader.get_region(chrom, verbose=True)
+                ggt = genotypeio.GenotypeGeneratorTrans(genotypes, batch_size=batch_size, dtype=np.float32)
+                dataset_genotypes = tf.data.Dataset.from_generator(ggt.generate_data, output_types=tf.float32)
+                dataset_genotypes = dataset_genotypes.prefetch(10)
+                iterator = dataset_genotypes.make_one_shot_iterator()
+                next_element = iterator.get_next()
+                next_element = tf.gather(next_element, ix_t, axis=1)
+
+                nominal_list = []
+                perms_list = []
+                for i in range(1, ggt.num_batches+1):
+                    sys.stdout.write('\r  * {}: processing batch {}/{}  '.format(chrom, i, ggt.num_batches))
+                    sys.stdout.flush()
+
+                    g_iter = sess.run(next_element)
+                    max_r2_nominal, max_r2_permuted = sess.run([max_r2_nominal_t, max_r2_permuted_t], feed_dict={genotypes_t:g_iter})
+                    nominal_list.append(max_r2_nominal)
+                    perms_list.append(max_r2_permuted)
+
+                chr_max_r2_nominal[chrom] = np.max(np.array(nominal_list), 0)
+                chr_max_r2_empirical[chrom] = np.max(np.array(perms_list), 0)
+        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+
+        chr_max_r2_nominal = pd.DataFrame(chr_max_r2_nominal, index=phenotype_df.index)
+        chr_max_r2_empirical = pd.DataFrame(chr_max_r2_empirical)
+
         # compute leave-one-out max
         max_r2_nominal = OrderedDict()
         max_r2_empirical = OrderedDict()
@@ -1155,19 +1157,42 @@ def map_trans_permutations(plink_reader, phenotype_df, covariates_df,
         pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
 
     else:
-        max_r2_nominal = chr_max_r2_nominal.max(axis=1)
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df.values, batch_size=batch_size, dtype=np.float32)
+        dataset_genotypes = tf.data.Dataset.from_generator(ggt.generate_data, output_types=tf.float32)
+        dataset_genotypes = dataset_genotypes.prefetch(10)
+        iterator = dataset_genotypes.make_one_shot_iterator()
+        next_element = iterator.get_next()
+        next_element = tf.gather(next_element, ix_t, axis=1)
+
+        start_time = time.time()
+        with tf.Session() as sess:
+            sess.run(init_op)
+            max_r2_nominal = []
+            max_r2_empirical = []
+            for i in range(ggt.num_batches):
+                sys.stdout.write('\rProcessing batch {}/{}'.format(i+1, ggt.num_batches))
+                sys.stdout.flush()
+
+                g_iter = sess.run(next_element)
+                res = sess.run([max_r2_nominal_t, max_r2_permuted_t], feed_dict={genotypes_t:g_iter})
+                max_r2_nominal.append(res[0])
+                max_r2_empirical.append(res[1])
+            print()
+        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+
+        max_r2_nominal = np.max(np.array(max_r2_nominal), 0)
         tstat = np.sqrt( dof*max_r2_nominal / (1-max_r2_nominal) )
         minp_nominal = 2*stats.t.cdf(-np.abs(tstat), dof)
 
-        max_r2_empirical = chr_max_r2_empirical.max(axis=1)
+        max_r2_empirical = np.max(np.array(max_r2_empirical), 0)
         tstat = np.sqrt( dof*max_r2_empirical / (1-max_r2_empirical) )
         minp_empirical = 2*stats.t.cdf(-np.abs(tstat), dof)
 
         pval_perm = np.array([(np.sum(minp_empirical<=p)+1)/(nperms+1) for p in minp_nominal])
-
         # calculate beta p-values for each phenotype:
-        pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof = calculate_beta_approx_pval(max_r2_empirical, max_r2_nominal, dof)
-
+        beta_shape1, beta_shape2, true_dof, minp_vec = fit_beta_parameters(max_r2_empirical, dof, tol=1e-4, return_minp=True)
+        pval_true_dof = pval_from_corr(max_r2_nominal, true_dof)
+        pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
 
     fit_df = pd.DataFrame(OrderedDict([
         ('beta_shape1', beta_shape1),
@@ -1179,11 +1204,10 @@ def map_trans_permutations(plink_reader, phenotype_df, covariates_df,
         ('pval_beta', pval_beta),
     ]), index=phenotype_df.index)
 
-    return fit_df
-    # if split_chr:
-    #     return fit_df
-    # else:
-    #     return fit_df, minp_vec
+    if split_chr:
+        return fit_df
+    else:
+        return fit_df, minp_vec
 
 
 def map_trans_tfrecord(vcf_tfrecord, phenotype_df, covariates_df, interaction_s=None, return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05, batch_size=50000, logger=None):
