@@ -137,10 +137,11 @@ def _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, m
     maf_t = calculate_maf(genotypes_t)
     ix = tf.where(maf_t>=maf_threshold)
 
-    r2_nom_t = tf.pow(tf.gather(_calculate_corr(genotypes_t, phenotypes_t, covariates_t), ix), 2)
-    r2_emp_t = tf.pow(tf.gather(_calculate_corr(genotypes_t, permutations_t, covariates_t), ix), 2)
+    g2 = tf.squeeze(tf.gather(genotypes_t, ix))
+    r2_nom_t = tf.pow(_calculate_corr(g2, phenotypes_t, covariates_t), 2)
+    r2_emp_t = tf.pow(_calculate_corr(g2, permutations_t, covariates_t), 2)
 
-    return tf.squeeze(tf.reduce_max(r2_nom_t, axis=0)), tf.squeeze(tf.reduce_max(r2_emp_t, axis=0))
+    return tf.squeeze(tf.reduce_max(r2_nom_t, axis=0)), tf.squeeze(tf.reduce_max(r2_emp_t, axis=0)), tf.gather(tf.squeeze(ix), tf.argmax(r2_nom_t, axis=0))
 
 
 def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0):
@@ -1087,7 +1088,7 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
     permutations_t = tf.reshape(permutations_t, shape=[-1, n_samples])
 
     genotypes_t, phenotypes_t, covariates_t = initialize_data(phenotype_df, covariates_df, batch_size=batch_size, dtype=tf.float32)
-    max_r2_nominal_t, max_r2_permuted_t = _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, maf_threshold=maf_threshold)
+    max_r2_nominal_t, max_r2_permuted_t, idxmax_t = _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, maf_threshold=maf_threshold)
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
     if split_chr:
@@ -1109,6 +1110,7 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
 
                 nominal_list = []
                 perms_list = []
+                nominal_idx_list = []
                 for i in range(1, ggt.num_batches+1):
                     sys.stdout.write('\r  * {}: processing batch {}/{}  '.format(chrom, i, ggt.num_batches))
                     sys.stdout.flush()
@@ -1155,6 +1157,7 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
 
         pval_true_dof = pval_from_corr(r2_nominal, true_dof)
         pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
+        variant_id = [np.NaN]*len(pval_beta)
 
     else:
         ggt = genotypeio.GenotypeGeneratorTrans(genotype_df.values, batch_size=batch_size, dtype=np.float32)
@@ -1165,26 +1168,34 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
         next_element = tf.gather(next_element, ix_t, axis=1)
 
         start_time = time.time()
+        max_r2_nominal = []
+        max_r2_nominal_idx = []
+        max_r2_empirical = []
         with tf.Session() as sess:
             sess.run(init_op)
-            max_r2_nominal = []
-            max_r2_empirical = []
             for i in range(ggt.num_batches):
                 sys.stdout.write('\rProcessing batch {}/{}'.format(i+1, ggt.num_batches))
                 sys.stdout.flush()
-
                 g_iter = sess.run(next_element)
-                res = sess.run([max_r2_nominal_t, max_r2_permuted_t], feed_dict={genotypes_t:g_iter})
+                res = sess.run([max_r2_nominal_t, max_r2_permuted_t, idxmax_t], feed_dict={genotypes_t:g_iter})
                 max_r2_nominal.append(res[0])
+                max_r2_nominal_idx.append(res[2] + i*batch_size)
                 max_r2_empirical.append(res[1])
             print()
+        max_r2_nominal = np.array(max_r2_nominal)
+        max_r2_nominal_idx = np.array(max_r2_nominal_idx)
+        max_r2_empirical = np.array(max_r2_empirical)
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
-        max_r2_nominal = np.max(np.array(max_r2_nominal), 0)
+        idxmax = np.argmax(max_r2_nominal, 0)
+        variant_ix = [max_r2_nominal_idx[i,k] for k,i in enumerate(idxmax)]
+        variant_id = genotype_df.index[variant_ix]
+
+        max_r2_nominal = np.max(max_r2_nominal, 0)
         tstat = np.sqrt( dof*max_r2_nominal / (1-max_r2_nominal) )
         minp_nominal = 2*stats.t.cdf(-np.abs(tstat), dof)
 
-        max_r2_empirical = np.max(np.array(max_r2_empirical), 0)
+        max_r2_empirical = np.max(max_r2_empirical, 0)
         tstat = np.sqrt( dof*max_r2_empirical / (1-max_r2_empirical) )
         minp_empirical = 2*stats.t.cdf(-np.abs(tstat), dof)
 
@@ -1199,6 +1210,7 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
         ('beta_shape2', beta_shape2),
         ('true_df', true_dof),
         ('min_pval_true_df', pval_true_dof),
+        ('variant_id', variant_id),
         ('min_pval_nominal', minp_nominal),
         ('pval_perm', pval_perm),
         ('pval_beta', pval_beta),
