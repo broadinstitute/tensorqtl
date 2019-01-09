@@ -1187,6 +1187,10 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
         max_r2_empirical = np.array(max_r2_empirical)
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
+        if len(max_r2_nominal_idx.shape)==1:
+            max_r2_nominal = max_r2_nominal.reshape(-1,1)
+            max_r2_nominal_idx = max_r2_nominal_idx.reshape(-1,1)
+
         idxmax = np.argmax(max_r2_nominal, 0)
         variant_ix = [max_r2_nominal_idx[i,k] for k,i in enumerate(idxmax)]
         variant_id = genotype_df.index[variant_ix]
