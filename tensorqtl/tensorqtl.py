@@ -766,11 +766,11 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write('done.')
 
 
-def calculate_cis_nominal_interaction(genotypes_t, phenotype_t, interaction_t, dof, residualizer,
-                                      interaction_mask_t=None, maf_threshold_interaction=0.05):
-
+def calculate_nominal_interaction(genotypes_t, phenotype_t, interaction_t, dof, residualizer,
+                                  interaction_mask_t=None, maf_threshold_interaction=0.05,
+                                  return_sparse=False, tstat_threshold=None):
+    """"""
     phenotype_t = tf.reshape(phenotype_t, [1,-1])
-
     # filter monomorphic sites (to avoid colinearity in X)
     mask_t = ~(tf.reduce_all(tf.equal(genotypes_t, 0), axis=1) |
                tf.reduce_all(tf.equal(genotypes_t, 1), axis=1) |
@@ -800,28 +800,29 @@ def calculate_cis_nominal_interaction(genotypes_t, phenotype_t, interaction_t, d
     p_t = tf.reshape(phenotype_t, [1,-1])
     p0_t = p_t - tf.reduce_mean(p_t, axis=1, keepdims=True)
 
-    # residualize
+    # residualize rows
     g0_t = residualizer.transform(g0_t, center=False)
     gi0_t = residualizer.transform(gi0_t, center=False)
     p0_t = residualizer.transform(p0_t, center=False)
     i0_t = residualizer.transform(i0_t, center=False)
     i0_t = tf.tile(i0_t, [ng, 1])
 
+    # regression
     X_t = tf.stack([g0_t, i0_t, gi0_t], axis=2)
     Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))
     b_t = tf.matmul(tf.matmul(Xinv, X_t, transpose_b=True), tf.tile(tf.reshape(p0_t, [1,1,-1]), [ng,1,1]), transpose_b=True)
 
+    # calculate b, b_se
     r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t
     rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
     Cx = Xinv * tf.reshape(rss_t, [-1,1,1]) / dof
-
     b_se_t = tf.sqrt(tf.matrix_diag_part(Cx))
     b_t = tf.squeeze(b_t)
-    tstat = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))
+    tstat_t = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))
     # weird tf bug? without cast/copy, divide appears to modify b_se_t??
-
+    # calculate pval
     tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
-    pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
+    pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))
 
     # calculate MAF
     n2 = 2*ns
@@ -840,7 +841,7 @@ def calculate_cis_nominal_interaction(genotypes_t, phenotype_t, interaction_t, d
     return pval_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t, mask_t
 
 
-def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
+def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
                                 prefix, maf_threshold_interaction=0.05, best_only=False, output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
@@ -877,7 +878,7 @@ def map_cis_nominal_interaction(plink_reader, phenotype_df, phenotype_pos_df, co
             iterator = dataset.make_one_shot_iterator()
             next_phenotype, next_genotypes, _, next_id = iterator.get_next()
 
-            x = calculate_cis_nominal_interaction(next_genotypes, next_phenotype, interaction_t, dof, residualizer,
+            x = calculate_nominal_interaction(next_genotypes, next_phenotype, interaction_t, dof, residualizer,
                                       interaction_mask_t=interaction_mask_t, maf_threshold_interaction=0.05)
 
             chr_res_df = []
@@ -962,10 +963,11 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     # calculate correlation threshold for sparse output
     if return_sparse:
         dof = n_samples - 2 - covariates_df.shape[1]
-        t = stats.t.ppf(pval_threshold/2, dof)**2 / dof
-        r2_threshold = t / (1+t)
+        tstat_threshold = stats.t.ppf(pval_threshold/2, dof)
+        r2_threshold = tstat_threshold**2 / (dof + tstat_threshold**2)
     else:
         r2_threshold = None
+        tstat_threshold = None
 
     if interaction_s is None:
         genotypes, phenotypes, covariates = initialize_data(phenotype_df, covariates_df,
@@ -978,6 +980,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                                                                          batch_size=batch_size, interaction_s=interaction_s)
         p_values, maf = calculate_association(genotypes, phenotypes, covariates, interaction_t=interaction,
                                               return_sparse=return_sparse, r2_threshold=r2_threshold)
+
 
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
@@ -1458,7 +1461,7 @@ def main():
                 map_cis_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
                                 output_dir=args.output_dir, logger=logger)
             else:
-                map_cis_nominal_interaction(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
+                map_cis_interaction_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
                                 args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
                                 best_only=args.best_only, output_dir=args.output_dir, logger=logger)
         elif args.mode=='cis_independent':
