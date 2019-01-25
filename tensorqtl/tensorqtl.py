@@ -665,7 +665,7 @@ def get_significant_pairs(res_df, nominal_prefix, fdr=0.05):
     signif_df = signif_df.merge(df, left_on='phenotype_id', right_index=True)
     print('['+datetime.now().strftime("%b %d %H:%M:%S")+'] done', flush=True)
     return signif_df
-    # signif_df.to_parquet(nominal_prefix.rsplit('.',1)[0]+'.significant_variant_phenotype_pairs.parquet')
+    # signif_df.to_parquet(nominal_prefix.rsplit('.',1)[0]+'.cis_qtl_significant_pairs.parquet')
 
 
 def calculate_cis_nominal(genotypes_t, phenotype_t, covariates_t, dof):
@@ -708,7 +708,7 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
     Association results for each chromosome are written to parquet files
-    in the format <output_dir>/<prefix>.variant_phenotype_pairs.<chr>.parquet
+    in the format <output_dir>/<prefix>.cis_qtl_pairs.<chr>.parquet
     """
     if logger is None:
         logger = SimpleLogger()
@@ -762,7 +762,7 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
             print()
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
             print('  * writing output')
-            pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.variant_phenotype_pairs.{}.parquet'.format(prefix, chrom)))
+            pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
     logger.write('done.')
 
 
@@ -847,7 +847,7 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
     Association results for each chromosome are written to parquet files
-    in the format <output_dir>/<prefix>.variant_phenotype_pairs.<chr>.parquet
+    in the format <output_dir>/<prefix>.cis_qtl_pairs.<chr>.parquet
     """
     if logger is None:
         logger = SimpleLogger()
@@ -919,10 +919,10 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
             if not best_only:
                 print('  * writing output')
-                pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.variant_phenotype_pairs.{}.parquet'.format(prefix, chrom)))
+                pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
         if best_only:
             pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').to_csv(
-                    os.path.join(output_dir, '{}.variant_phenotype_pairs.top_associations.txt.gz'.format(prefix)),
+                    os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
                     sep='\t', float_format='%.6g', compression='gzip'
                 )
     logger.write('done.')
@@ -1047,7 +1047,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     return pval_df
 
 
-def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
+def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutations=None,
                            split_chr=True, pval_df=None, nperms=10000, maf_threshold=0.05,
                            batch_size=20000, logger=None):
     """
@@ -1082,11 +1082,16 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df,
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(n_variants))
 
-    # generate permutations
-    q = stats.norm.ppf(np.arange(1,n_samples+1)/(n_samples+1))
-    qv = np.tile(q,[nperms,1])
-    for i in np.arange(nperms):
-        np.random.shuffle(qv[i,:])
+    if permutations is None:  # generate permutations
+        q = stats.norm.ppf(np.arange(1,n_samples+1)/(n_samples+1))
+        qv = np.tile(q,[nperms,1])
+        for i in np.arange(nperms):
+            np.random.shuffle(qv[i,:])
+    else:
+        assert permutations.shape[1]==n_samples
+        nperms = permutations.shape[0]
+        qv = permutations
+        logger.write('  * {} permutations'.format(nperms))
     permutations_t = tf.constant(qv, dtype=tf.float32)
     permutations_t = tf.reshape(permutations_t, shape=[-1, n_samples])
 
@@ -1402,10 +1407,10 @@ def main():
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
     # check inputs
-    if args.mode=='cis_independent' and args.cis_output is None:
+    if args.mode=='cis_independent' and (args.cis_output is None or not os.path.exists(args.cis_output)):
         raise ValueError("Output from 'cis' mode must be provided.")
 
-    logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.log'))
+    logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.{}.log'.format(args.mode)))
     logger.write('[{}] Running TensorQTL: {}-QTL mapping'.format(datetime.now().strftime("%b %d %H:%M:%S"), args.mode.split('_')[0]))
 
     # load inputs
@@ -1448,11 +1453,11 @@ def main():
         group_s = None
 
     if args.mode.startswith('cis'):
-        pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns)
+        pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
         if args.mode=='cis':
             res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger)
             logger.write('  * writing output')
-            out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl_phenotypes.txt.gz')
+            out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             if has_rpy2 and group_s is None:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
             res_df.to_csv(out_file, sep='\t', float_format='%.6g', compression='gzip')
