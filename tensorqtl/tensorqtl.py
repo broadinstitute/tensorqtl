@@ -144,7 +144,7 @@ def _calculate_max_r2(genotypes_t, phenotypes_t, permutations_t, covariates_t, m
     return tf.squeeze(tf.reduce_max(r2_nom_t, axis=0)), tf.squeeze(tf.reduce_max(r2_emp_t, axis=0)), tf.gather(tf.squeeze(ix), tf.argmax(r2_nom_t, axis=0))
 
 
-def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0):
+def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0, return_r2=False):
     """Calculate p-values from squared correlations"""
     dims = r2_t.get_shape()
     if return_sparse:
@@ -164,7 +164,10 @@ def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0):
         pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
 
     if maf_t is not None:
-        return pval_t, maf_t
+        if return_r2:
+            return pval_t, maf_t, r2_t
+        else:
+            return pval_t, maf_t
     else:
         return pval_t
 
@@ -179,7 +182,7 @@ def _interaction_assoc_row(genotype_t, phenotype_t, icovariates_t, return_sd=Fal
     return _calculate_corr(ix_t, phenotype_t, gi_covariates_t, return_sd=return_sd)
 
 
-def calculate_association(genotype_t, phenotype_t, covariates_t, interaction_t=None, return_sparse=True, r2_threshold=None):
+def calculate_association(genotype_t, phenotype_t, covariates_t, interaction_t=None, return_sparse=True, r2_threshold=None, return_r2=False):
     """Calculate genotype-phenotype associations"""
     maf_t = calculate_maf(genotype_t)
 
@@ -191,7 +194,7 @@ def calculate_association(genotype_t, phenotype_t, covariates_t, interaction_t=N
         r2_t = tf.pow(tf.map_fn(lambda x: _interaction_assoc_row(x, phenotype_t, icovariates_t), genotype_t, infer_shape=False), 2)
         dof = genotype_t.shape[1].value - 4 - covariates_t.shape[1].value
 
-    return calculate_pval(r2_t, dof, maf_t, return_sparse=return_sparse, r2_threshold=r2_threshold)
+    return calculate_pval(r2_t, dof, maf_t, return_sparse=return_sparse, r2_threshold=r2_threshold, return_r2=return_r2)
 
 
 def get_sample_indexes(vcf_sample_ids, phenotype_df):
@@ -930,7 +933,7 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
 
 def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
               return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05,
-              batch_size=20000, logger=None, verbose=True):
+              return_r2=False, batch_size=20000, logger=None, verbose=True):
     """Run trans-QTL mapping from genotypes in memory"""
     if logger is None:
         logger = SimpleLogger(verbose=verbose)
@@ -973,13 +976,13 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         genotypes, phenotypes, covariates = initialize_data(phenotype_df, covariates_df,
                                                             batch_size=batch_size, dtype=tf.float32)
         # with tf.device('/gpu:0'):
-        p_values, maf = calculate_association(genotypes, phenotypes, covariates,
-                                              return_sparse=return_sparse, r2_threshold=r2_threshold)
+        x = calculate_association(genotypes, phenotypes, covariates, return_sparse=return_sparse,
+                                  r2_threshold=r2_threshold, return_r2=return_r2)
     else:
         genotypes, phenotypes, covariates, interaction = initialize_data(phenotype_df, covariates_df,
                                                                          batch_size=batch_size, interaction_s=interaction_s)
-        p_values, maf = calculate_association(genotypes, phenotypes, covariates, interaction_t=interaction,
-                                              return_sparse=return_sparse, r2_threshold=r2_threshold)
+        x = calculate_association(genotypes, phenotypes, covariates, interaction_t=interaction,
+                                  return_sparse=return_sparse, r2_threshold=r2_threshold)
 
 
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
@@ -994,23 +997,29 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         sess.run(init_op)
         pval_list = []
         maf_list = []
+        r2_list = []
         for i in range(1, ggt.num_batches+1):
             if verbose:
                 sys.stdout.write('\r  * processing batch {}/{}'.format(i, ggt.num_batches))
                 sys.stdout.flush()
 
             g_iter = sess.run(next_element)
-            p_ = sess.run([p_values, maf], feed_dict={genotypes:g_iter})#, options=run_options, run_metadata=run_metadata)
+            # x: p_values, maf, {r2}
+            p_ = sess.run(x, feed_dict={genotypes:g_iter})#, options=run_options, run_metadata=run_metadata)
             # writer.add_run_metadata(run_metadata, 'batch{}'.format(i))
 
             pval_list.append(p_[0])
             maf_list.append(p_[1])
+            if return_r2:
+                r2_list.append(p_[2])
 
         if return_sparse:
             pval = tf.sparse_concat(0, pval_list).eval()
         else:
             pval = tf.concat(pval_list, 0).eval()
         maf = tf.concat(maf_list, 0).eval()
+        if return_r2:
+            r2 = tf.concat(r2_list, 0).eval()
         if verbose:
             print()
         # writer.close()
@@ -1030,6 +1039,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         )
         pval_df['pval'] = pval_df['pval'].astype(np.float64)
         pval_df['maf'] = pval_df['maf'].astype(np.float32)
+        if return_r2:
+            pval_df['r2'] = r2[ix].astype(np.float32)
     else:
         # truncate last batch
         pval = pval[:n_variants]
@@ -1396,6 +1407,7 @@ def main():
     parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >=maf_threshold. Default: 0')
     parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
+    parser.add_argument('--return_r2', action='store_true', help='Return r2 (only for sparse trans-QTL output)')
     parser.add_argument('--best_only', action='store_true', help='Produce output only for the top association/phenotype')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=50000, help='Batch size. Reduce this if encountering OOM errors.')
@@ -1404,7 +1416,7 @@ def main():
     parser.add_argument('-o', '--output_dir', default='.', help='Output directory')
     args = parser.parse_args()
 
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+    # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
     # check inputs
     if args.mode=='cis_independent' and (args.cis_output is None or not os.path.exists(args.cis_output)):
@@ -1487,7 +1499,8 @@ def main():
         genotype_df = genotypeio.load_genotypes(args.genotype_path)
         pval_df = map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_s,
                   return_sparse=return_sparse, pval_threshold=pval_threshold,
-                  maf_threshold=maf_threshold, batch_size=args.batch_size, logger=logger)
+                  maf_threshold=maf_threshold, batch_size=args.batch_size,
+                  return_r2=args.return_r2, logger=logger)
 
         logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
         pval_df = filter_cis(pval_df, tss_dict, window=5000000)
