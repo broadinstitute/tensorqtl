@@ -1072,7 +1072,8 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutat
     if split_chr:
         plink_reader = genotype_input
         # assert isinstance(plink_reader, genotypeio.PlinkReader)
-        assert pval_df is not None and 'phenotype_chr' in pval_df and 'pval' in pval_df and np.all(pval_df.index==phenotype_df.index)
+        if pval_df is not None:
+            assert 'phenotype_chr' in pval_df and 'pval' in pval_df and np.all(pval_df.index==phenotype_df.index)
         variant_ids = plink_reader.bim['snp'].tolist()
         # index of VCF samples corresponding to phenotypes
         ix_t = get_sample_indexes(plink_reader.fam['iid'].tolist(), phenotype_df)
@@ -1155,28 +1156,37 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutat
         max_r2_nominal = pd.DataFrame(max_r2_nominal, index=phenotype_df.index)
         max_r2_empirical = pd.DataFrame(max_r2_empirical)  # nperms x chrs
 
-        # nominal p-value (sanity check, matches pval_df['pval'])
-        r2_nominal = max_r2_nominal.lookup(pval_df['phenotype_id'], pval_df['phenotype_chr'])
-        tstat = np.sqrt( dof*r2_nominal / (1-r2_nominal) )
-        minp_nominal = pd.Series(2*stats.t.cdf(-np.abs(tstat), dof), index=pval_df['phenotype_id'])
+        if pval_df is not None:
+            # nominal p-value (sanity check, matches pval_df['pval'])
+            r2_nominal = max_r2_nominal.lookup(pval_df['phenotype_id'], pval_df['phenotype_chr'])
+            tstat = np.sqrt( dof*r2_nominal / (1-r2_nominal) )
+            minp_nominal = pd.Series(2*stats.t.cdf(-np.abs(tstat), dof), index=pval_df['phenotype_id'])
 
         # empirical p-values
         tstat = np.sqrt( dof*max_r2_empirical / (1-max_r2_empirical) )
         minp_empirical = pd.DataFrame(2*stats.t.cdf(-np.abs(tstat), dof), columns=tstat.columns)
-        pval_perm = np.array([(np.sum(minp_empirical[chrom]<=p)+1)/(nperms+1) for p, chrom in zip(pval_df['pval'], pval_df['phenotype_chr'])])
+        if pval_df is not None:
+            pval_perm = np.array([(np.sum(minp_empirical[chrom]<=p)+1)/(nperms+1) for p, chrom in zip(pval_df['pval'], pval_df['phenotype_chr'])])
 
         beta_shape1 = {}
         beta_shape2 = {}
         true_dof = {}
         for c in max_r2_empirical:
             beta_shape1[c], beta_shape2[c], true_dof[c] = fit_beta_parameters(max_r2_empirical[c], dof)
-        beta_shape1 = [beta_shape1[c] for c in pval_df['phenotype_chr']]
-        beta_shape2 = [beta_shape2[c] for c in pval_df['phenotype_chr']]
-        true_dof = [true_dof[c] for c in pval_df['phenotype_chr']]
+        if pval_df is not None:
+            beta_shape1 = [beta_shape1[c] for c in pval_df['phenotype_chr']]
+            beta_shape2 = [beta_shape2[c] for c in pval_df['phenotype_chr']]
+            true_dof = [true_dof[c] for c in pval_df['phenotype_chr']]
+        else:
+            chroms = plink_reader.bim['chrom'].unique()
+            beta_shape1 = [beta_shape1[c] for c in chroms]
+            beta_shape2 = [beta_shape2[c] for c in chroms]
+            true_dof = [true_dof[c] for c in chroms]
 
-        pval_true_dof = pval_from_corr(r2_nominal, true_dof)
-        pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
-        variant_id = [np.NaN]*len(pval_beta)
+        if pval_df is not None:
+            pval_true_dof = pval_from_corr(r2_nominal, true_dof)
+            pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
+            variant_id = [np.NaN]*len(pval_beta)
 
     else:
         ggt = genotypeio.GenotypeGeneratorTrans(genotype_df.values, batch_size=batch_size, dtype=np.float32)
@@ -1228,19 +1238,26 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutat
         pval_true_dof = pval_from_corr(max_r2_nominal, true_dof)
         pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
 
-    fit_df = pd.DataFrame(OrderedDict([
-        ('beta_shape1', beta_shape1),
-        ('beta_shape2', beta_shape2),
-        ('true_df', true_dof),
-        ('min_pval_true_df', pval_true_dof),
-        ('variant_id', variant_id),
-        ('min_pval_nominal', minp_nominal),
-        ('pval_perm', pval_perm),
-        ('pval_beta', pval_beta),
-    ]), index=phenotype_df.index)
+    if not split_chr or pval_df is not None:
+        fit_df = pd.DataFrame(OrderedDict([
+            ('beta_shape1', beta_shape1),
+            ('beta_shape2', beta_shape2),
+            ('true_df', true_dof),
+            ('min_pval_true_df', pval_true_dof),
+            ('variant_id', variant_id),
+            ('min_pval_nominal', minp_nominal),
+            ('pval_perm', pval_perm),
+            ('pval_beta', pval_beta),
+        ]), index=phenotype_df.index)
+    else:
+        fit_df = pd.DataFrame(OrderedDict([
+            ('beta_shape1', beta_shape1),
+            ('beta_shape2', beta_shape2),
+            ('true_df', true_dof),
+        ]), index=chroms)
 
     if split_chr:
-        return fit_df
+        return fit_df, minp_empirical
     else:
         return fit_df, minp_vec
 
@@ -1384,7 +1401,12 @@ def filter_cis(pval_df, tss_dict, window=1000000):
 #------------------------------------------------------------------------------
 def read_phenotype_bed(phenotype_bed):
     """Load phenotype BED file as phenotype and TSS DataFrames"""
-    phenotype_df = pd.read_csv(phenotype_bed, sep='\t', index_col=3, dtype={'#chr':str, '#Chr':str})
+    if phenotype_bed.endswith('.bed.gz'):
+        phenotype_df = pd.read_csv(phenotype_bed, sep='\t', index_col=3, dtype={'#chr':str, '#Chr':str})
+    elif phenotype_bed.endswith('.parquet'):
+        phenotype_df = pd.read_parquet(phenotype_bed)
+    else:
+        raise ValueError('Unsupported file type.')
     phenotype_df = phenotype_df.rename(columns={i:i.lower() for i in phenotype_df.columns[:3]})
     phenotype_pos_df = phenotype_df[['#chr', 'end']].rename(columns={'#chr':'chr', 'end':'tss'})
     phenotype_df = phenotype_df.drop(['#chr', 'start', 'end'], axis=1)
