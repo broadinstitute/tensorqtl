@@ -201,6 +201,7 @@ class PlinkReader(object):
             self.sample_ids = self.fam['iid'].tolist()
         self.n_samples = self.fam.shape[0]
         self.variant_pos = {i:g['pos'] for i,g in self.bim.set_index('snp')[['chrom', 'pos']].groupby('chrom')}
+        self.variant_pos_dict = self.bim.set_index('snp')['pos'].to_dict()
 
     def get_region(self, region_str, impute=True, verbose=False):
         """Get genotypes for a region defined by 'chr:start-end' or 'chr'"""
@@ -320,6 +321,7 @@ class GenotypeGeneratorTrans(object):
 
     @background(max_prefetch=6)
     def generate_data(self):
+        """Generate batches from genotype data"""
         for k,i in enumerate(self.genotype_batch_indexes, 1):
             g = self.genotypes[i[0]:i[1]].astype(self.dtype)
             if k==self.num_batches:  # pad last batch
@@ -339,9 +341,10 @@ class InputGeneratorCis(object):
 
     Generates: phenotype array, genotype array (2D), cis-window indices, phenotype ID
     """
-    def __init__(self, plink_reader, phenotype_df, phenotype_pos_df, window=1000000):
+    def __init__(self, plink_reader, phenotype_df, phenotype_pos_df, genotype_df=None, window=1000000):
         assert (phenotype_df.index==phenotype_df.index.unique()).all()
         self.plink_reader = plink_reader
+        self.genotype_df = genotype_df
         self.n_samples = phenotype_df.shape[1]
         self.phenotype_df = phenotype_df
         self.phenotype_pos_df = phenotype_pos_df
@@ -358,6 +361,13 @@ class InputGeneratorCis(object):
         # check phenotypes & calculate genotype ranges
         valid_ix = []
         self.cis_ranges = {}
+
+        chr_size_s = plink_reader.bim['chrom'].value_counts()[plink_reader.bim['chrom'].unique()]
+        if genotype_df is not None:
+            chr_offset_s = pd.Series([0]+chr_size_s.iloc[:-1].tolist(), index=chr_size_s.index).cumsum()
+        else:
+            chr_offset_s = pd.Series(0, index=chr_size_s.index)
+
         for k,phenotype_id in enumerate(phenotype_df.index,1):
             if np.mod(k,1000)==0:
                 print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]), end='')
@@ -367,7 +377,7 @@ class InputGeneratorCis(object):
             r = var_index_chr[chrom][
                 (plink_reader.variant_pos[chrom].values>=tss-self.window) &
                 (plink_reader.variant_pos[chrom].values<=tss+self.window)
-            ]
+            ] + chr_offset_s[chrom]  # offset is 0 if loading by chr
             if len(r)>0:
                 valid_ix.append(phenotype_id)
                 self.cis_ranges[phenotype_id] = [r[0],r[-1]]
@@ -385,18 +395,25 @@ class InputGeneratorCis(object):
 
     @background(max_prefetch=6)
     def generate_data(self):
-        for k,phenotype_id in enumerate(self.phenotype_df.index):
-            chrom = self.phenotype_chr[phenotype_id]
-            if chrom != self.loaded_chrom:
-                # load genotypes into memory
-                print('  * loading genotypes')
-                self.chr_genotypes, self.chr_variant_pos = self.plink_reader.get_region(chrom, verbose=True)
-                self.loaded_chrom = chrom
+        if self.genotype_df is None:
+            for k,phenotype_id in enumerate(self.phenotype_df.index):
+                chrom = self.phenotype_chr[phenotype_id]
+                if chrom != self.loaded_chrom:
+                    # load genotypes into memory
+                    print('  * loading genotypes')
+                    self.chr_genotypes, self.chr_variant_pos = self.plink_reader.get_region(chrom, verbose=True)
+                    self.loaded_chrom = chrom
 
-            # return phenotype & its permutations in same array; fetch genotypes
-            p = self.phenotype_values[k]
-            r = self.cis_ranges[phenotype_id]
-            yield p, self.chr_genotypes[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
+                # return phenotype & its permutations in same array; fetch genotypes
+                p = self.phenotype_values[k]
+                r = self.cis_ranges[phenotype_id]
+                yield p, self.chr_genotypes[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
+        else:
+            for k,phenotype_id in enumerate(self.phenotype_df.index):
+                # return phenotype & its permutations in same array; fetch genotypes
+                p = self.phenotype_values[k]
+                r = self.cis_ranges[phenotype_id]
+                yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
 
 #------------------------------------------------------------------------------
 #  Functions for parsing tfrecords
