@@ -1459,7 +1459,8 @@ def main():
     if args.interaction is not None:
         logger.write('  * reading interaction term ({})'.format(args.interaction))
         interaction_s = pd.read_csv(args.interaction, sep='\t', index_col=0, header=None, squeeze=True)
-        assert np.all(interaction_s.index==covariates_df.index)
+        assert covariates_df.index.isin(interaction_s.index).all()
+        interaction_s = interaction_s.loc[covariates_df.index]
     else:
         interaction_s = None
 
@@ -1487,7 +1488,7 @@ def main():
         group_s = None
 
     if args.mode.startswith('cis'):
-        pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
+        pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns)
         if args.mode=='cis':
             res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger)
             logger.write('  * writing output')

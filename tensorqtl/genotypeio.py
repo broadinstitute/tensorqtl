@@ -226,6 +226,11 @@ class PlinkReader(object):
             _impute_mean(g, verbose=verbose)
         return g, c.set_index('snp')['pos']
 
+    def get_genotype(self, variant_id, impute=False, verbose=False):
+        """Load genotype corresponding to variant ID as pd.Series"""
+        g,_ = self.get_genotypes([variant_id], impute=impute, verbose=verbose)
+        return pd.Series(g[0], index=self.fam['iid'])
+
     def get_all_genotypes(self, impute=False, verbose=False):
         """Load all genotypes into memory (impute=True should only be used for float formats)"""
         g = self.bed.compute()
