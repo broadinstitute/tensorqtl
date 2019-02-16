@@ -346,7 +346,7 @@ def _process_group_permutations(buf):
     return r_nom, s_r, var_ix, r2_perm, g, ng, nid
 
 
-def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s=None, nperm=10000, logger=None):
+def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s=None, nperm=10000, logger=None, seed=None):
     """Run cis-QTL mapping"""
     assert np.all(phenotype_df.columns==covariates_df.index)
     if logger is None:
@@ -366,6 +366,8 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
     # permutation indices
     n_samples = phenotype_df.shape[1]
     ix = np.arange(n_samples)
+    if seed is not None:
+        np.random.seed(seed)
     permutation_ix_t = tf.convert_to_tensor(np.array([np.random.permutation(ix) for i in range(nperm)]))
 
     # placeholders
@@ -445,7 +447,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
     return res_df.astype(output_dtype_dict)
 
 
-def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, fdr=0.05, fdr_col='qval', nperm=10000, logger=None):
+def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, fdr=0.05, fdr_col='qval', nperm=10000, logger=None, seed=None):
     """
     Run independent cis-QTL mapping (forward-backward regression)
 
@@ -478,6 +480,8 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
     # permutation indices
     n_samples = phenotype_df.shape[1]
     ix = np.arange(n_samples)
+    if seed is not None:
+        np.random.seed(seed)
     permutation_ix_t = tf.convert_to_tensor(np.array([np.random.permutation(ix) for i in range(nperm)]))
 
     # placeholders
@@ -924,7 +928,7 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
                 print('  * writing output')
                 pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
         if best_only:
-            pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').to_csv(
+            pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects().to_csv(
                     os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
                     sep='\t', float_format='%.6g', compression='gzip'
                 )
@@ -1060,7 +1064,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
 
 def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutations=None,
                            split_chr=True, pval_df=None, nperms=10000, maf_threshold=0.05,
-                           batch_size=20000, logger=None):
+                           batch_size=20000, logger=None, seed=None):
     """
     Warning: this function requires that all phenotypes are normally distributed,
              e.g., inverse normal transformed
@@ -1097,6 +1101,8 @@ def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutat
     if permutations is None:  # generate permutations
         q = stats.norm.ppf(np.arange(1,n_samples+1)/(n_samples+1))
         qv = np.tile(q,[nperms,1])
+        if seed is not None:
+            np.random.seed(seed)
         for i in np.arange(nperms):
             np.random.shuffle(qv[i,:])
     else:
@@ -1435,6 +1441,7 @@ def main():
     parser.add_argument('--batch_size', type=int, default=50000, help='Batch size. Reduce this if encountering OOM errors.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
     parser.add_argument('--qvalue_lambda', default=None, type=np.float64, help='lambda parameter for pi0est in qvalue.')
+    parser.add_argument('--seed', default=None, type=int, help='Seed for permutations.')
     parser.add_argument('-o', '--output_dir', default='.', help='Output directory')
     args = parser.parse_args()
 
@@ -1446,6 +1453,8 @@ def main():
 
     logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.{}.log'.format(args.mode)))
     logger.write('[{}] Running TensorQTL: {}-QTL mapping'.format(datetime.now().strftime("%b %d %H:%M:%S"), args.mode.split('_')[0]))
+    if args.seed is not None:
+        logger.write('  * using seed {}'.format(args.seed))
 
     # load inputs
     logger.write('  * reading phenotypes ({})'.format(args.phenotype_bed))
@@ -1490,7 +1499,7 @@ def main():
     if args.mode.startswith('cis'):
         pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns)
         if args.mode=='cis':
-            res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger)
+            res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger, seed=args.seed)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             if has_rpy2 and group_s is None:
@@ -1508,7 +1517,7 @@ def main():
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
             res_df = map_cis_independent(pr, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
-                                         fdr=args.fdr, nperm=args.permutations, logger=logger)
+                                         fdr=args.fdr, nperm=args.permutations, logger=logger, seed=args.seed)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g', compression='gzip')
