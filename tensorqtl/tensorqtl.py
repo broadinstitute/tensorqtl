@@ -290,13 +290,16 @@ def calculate_cis_permutations(genotypes_t, range_t, phenotype_t, covariates_t, 
     return r_nominal_t[ix], std_ratio_t[ix], range_t[ix], r2_perm_t, genotypes_t[ix], tf.shape(r_nominal_t)[0]
 
 
-def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, num_var, dof, n_samples, nperm=10000):
-    """Calculate beta-approximated empirical p-value and annotate phenotype"""
+def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=10000):
+    """Return nominal p-value, allele frequencies, etc. as pd.Series"""
     r2_nominal = r_nominal*r_nominal
     pval_perm = (np.sum(r2_perm>=r2_nominal)+1) / (nperm+1)
-    pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof = calculate_beta_approx_pval(r2_perm, r2_nominal, dof)
 
-    maf = np.sum(g) / (2*n_samples)
+    slope = r_nominal * std_ratio
+    tstat2 = dof * r2_nominal / (1 - r2_nominal)
+    slope_se = np.abs(slope) / np.sqrt(tstat2)
+
+    maf = np.sum(g) / (2*len(g))
     if maf <= 0.5:
         ref_factor = 1
         ma_samples = np.sum(g>0.5)
@@ -307,18 +310,14 @@ def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, num_var, dof, n_s
         ma_samples = np.sum(g<1.5)
         ma_count = np.sum(g[g<1.5])
 
-    slope = r_nominal * std_ratio
-    tstat2 = dof * r2_nominal / (1 - r2_nominal)
-    slope_se = np.abs(slope) / np.sqrt(tstat2)
-
-    return pd.Series(OrderedDict([
+    res_s = pd.Series(OrderedDict([
         ('num_var', num_var),
-        ('beta_shape1', beta_shape1),
-        ('beta_shape2', beta_shape2),
-        ('true_df', true_dof),
-        ('pval_true_df', pval_true_dof),
-        ('variant_id', np.NaN),
-        ('tss_distance', np.NaN),
+        ('beta_shape1', np.NaN),
+        ('beta_shape2', np.NaN),
+        ('true_df', np.NaN),
+        ('pval_true_df', np.NaN),
+        ('variant_id', variant_id),
+        ('tss_distance', tss_distance),
         ('ma_samples', ma_samples),
         ('ma_count', ma_count),
         ('maf', maf),
@@ -327,8 +326,9 @@ def process_cis_permutations(r2_perm, r_nominal, std_ratio, g, num_var, dof, n_s
         ('slope', slope),
         ('slope_se', slope_se),
         ('pval_perm', pval_perm),
-        ('pval_beta', pval_beta),
-    ]))
+        ('pval_beta', np.NaN),
+    ]), name=phenotype_id)
+    return res_s
 
 
 def _process_group_permutations(buf):
@@ -343,10 +343,11 @@ def _process_group_permutations(buf):
     g, ng, nid = buf[max_ix][4:]
     # select best phenotype correlation for each permutation
     r2_perm = np.max([b[3] for b in buf], 0)
-    return r_nom, s_r, var_ix, r2_perm, g, ng, nid
+    return r_nom, s_r, var_ix, r2_perm, g, ng, nid.decode()
 
 
-def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s=None, nperm=10000, logger=None, seed=None):
+def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, genotype_df=None,
+            group_s=None, beta_approx=True, nperm=10000, logger=None, seed=None):
     """Run cis-QTL mapping"""
     assert np.all(phenotype_df.columns==covariates_df.index)
     if logger is None:
@@ -375,31 +376,32 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
     genotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
     phenotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
 
-    # iterate over chromosomes
     res_df = []
     start_time = time.time()
-    with tf.Session() as sess:
-        for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
-            logger.write('  Mapping chromosome {}'.format(chrom))
-            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+    if genotype_df is not None:
+        # index of VCF samples corresponding to phenotypes
+        ix_t = get_sample_indexes(genotype_df.columns.tolist(), phenotype_df)
 
+        with tf.Session() as sess:
+            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df, phenotype_pos_df, genotype_df=genotype_df)
             dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
             dataset = dataset.prefetch(1)
             iterator = dataset.make_one_shot_iterator()
             next_phenotype, next_genotypes, next_range, next_id = iterator.get_next()
+            next_genotypes = tf.gather(next_genotypes, ix_t, axis=1)
 
             r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t = calculate_cis_permutations(
                 next_genotypes, next_range, next_phenotype, covariates_t, permutation_ix_t)
 
             if group_s is None:
                 for i in range(1, igc.n_phenotypes+1):
-                    r_nom, s_r, var_ix, r2_perm, g, ng, nid = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
-
-                    # post-processing (on CPU)
-                    res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
-                    res_s.name = nid.decode()
-                    res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
-                    res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                    r_nominal, std_ratio, var_ix, r2_perm, g, num_var, nid = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
+                    phenotype_id = nid.decode()
+                    variant_id = plink_reader.bim['snp'][var_ix]
+                    tss_distance = plink_reader.variant_pos_dict[variant_id] - igc.phenotype_tss[phenotype_id]
+                    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                    if beta_approx:
+                        res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                     res_df.append(res_s)
                     print('\r  * computing permutations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
                 print()
@@ -412,12 +414,11 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
                     group_id = group_dict[igc.phenotype_df.index[i]]
                     ires = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
                     if (group_id != previous_group and len(buf)>0):  # new group, process previous
-                        # post-processing (on CPU)
-                        r_nom, s_r, var_ix, r2_perm, g, ng, nid = _process_group_permutations(buf)
-                        res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
-                        res_s.name = nid.decode()
-                        res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
-                        res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                        r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id = _process_group_permutations(buf)
+                        variant_id = plink_reader.bim['snp'][var_ix]
+                        tss_distance = plink_reader.variant_pos_dict[variant_id] - igc.phenotype_tss[phenotype_id]
+                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                        res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                         res_s['group_id'] = group_id
                         res_s['group_size'] = len(buf)
                         res_df.append(res_s)
@@ -429,22 +430,86 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, group_s
                         buf.append(ires)
                     previous_group = group_id
                 # process last group
-                r_nom, s_r, var_ix, r2_perm, g, ng, nid = _process_group_permutations(buf)
-                res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
-                res_s.name = nid.decode()
-                res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
-                res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id = _process_group_permutations(buf)
+                variant_id = plink_reader.bim['snp'][var_ix]
+                tss_distance = plink_reader.variant_pos_dict[variant_id] - igc.phenotype_tss[phenotype_id]
+                res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                 res_s['group_id'] = group_id
                 res_s['group_size'] = len(buf)
                 res_df.append(res_s)
                 processed_groups += 1
                 print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='\n')
+    else:
+        # iterate over chromosomes
+        with tf.Session() as sess:
+            for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
+                logger.write('  Mapping chromosome {}'.format(chrom))
+                igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+
+                dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
+                dataset = dataset.prefetch(1)
+                iterator = dataset.make_one_shot_iterator()
+                next_phenotype, next_genotypes, next_range, next_id = iterator.get_next()
+
+                r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t = calculate_cis_permutations(
+                    next_genotypes, next_range, next_phenotype, covariates_t, permutation_ix_t)
+
+                if group_s is None:
+                    for i in range(1, igc.n_phenotypes+1):
+                        r_nominal, std_ratio, var_ix, r2_perm, g, num_var, nid = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
+                        # post-processing (on CPU)
+                        phenotype_id = nid.decode()
+                        variant_id = igc.chr_variant_pos.index[var_ix]
+                        tss_distance = igc.chr_variant_pos[variant_id] - igc.phenotype_tss[phenotype_id]
+                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                        if beta_approx:
+                            res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+                        res_df.append(res_s)
+                        print('\r  * computing permutations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
+                    print()
+                else:
+                    n_groups = len(igc.phenotype_df.index.map(group_dict).unique())
+                    buf = []
+                    processed_groups = 0
+                    previous_group = None
+                    for i in range(0, igc.n_phenotypes):
+                        group_id = group_dict[igc.phenotype_df.index[i]]
+                        ires = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t, next_id])
+                        if (group_id != previous_group and len(buf)>0):  # new group, process previous
+                            # post-processing (on CPU)
+                            r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id = _process_group_permutations(buf)
+                            variant_id = igc.chr_variant_pos.index[var_ix]
+                            tss_distance = igc.chr_variant_pos[variant_id] - igc.phenotype_tss[phenotype_id]
+                            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                            res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+                            res_s['group_id'] = group_id
+                            res_s['group_size'] = len(buf)
+                            res_df.append(res_s)
+                            processed_groups += 1
+                            print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='')
+                            # reset
+                            buf = [ires]
+                        else:
+                            buf.append(ires)
+                        previous_group = group_id
+                    # process last group
+                    r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id = _process_group_permutations(buf)
+                    variant_id = igc.chr_variant_pos.index[var_ix]
+                    tss_distance = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[phenotype_id]
+                    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                    res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+                    res_s['group_id'] = group_id
+                    res_s['group_size'] = len(buf)
+                    res_df.append(res_s)
+                    processed_groups += 1
+                    print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='\n')
 
     res_df = pd.concat(res_df, axis=1).T
     res_df.index.name = 'phenotype_id'
     logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
     logger.write('done.')
-    return res_df.astype(output_dtype_dict)
+    return res_df.astype(output_dtype_dict).infer_objects()
 
 
 def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, fdr=0.05, fdr_col='qval', nperm=10000, logger=None, seed=None):
@@ -521,14 +586,16 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
                     covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                     # find next variant
-                    r_nom, s_r, var_ix, r2_perm, g, ng = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t],
+                    r_nominal, std_ratio, var_ix, r2_perm, g, num_var = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t],
                         feed_dict={genotypes_t:genotypes, range_t:genotype_range, phenotype_t:phenotype, covariates_t:covariates})
-                    res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
+
+                    x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                     # add to list if significant
-                    if res_s['pval_beta'] <= signif_threshold:
-                        res_s.name = phenotype_id
-                        res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
-                        res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                    if x[0] <= signif_threshold:
+                        variant_id = igc.chr_variant_pos.index[var_ix]
+                        tss_distance = igc.chr_variant_pos[variant_id] - igc.phenotype_tss[phenotype_id]
+                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                        res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = x
                         forward_df.append(res_s)
                     else:
                         break
@@ -545,21 +612,20 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
                             covariates_df.values,
                             dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values,
                         ])
-                        r_nom, s_r, var_ix, r2_perm, g, ng = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t],
+                        r_nominal, std_ratio, var_ix, r2_perm, g, num_var = sess.run([r_nominal_t, std_ratio_t, varpos_t, r2_perm_t, g_t, ng_t],
                             feed_dict={genotypes_t:genotypes, range_t:genotype_range, phenotype_t:phenotype, covariates_t:covariates})
                         dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
-                        res_s = process_cis_permutations(r2_perm, r_nom, s_r, g, ng, dof, phenotype_df.shape[1], nperm=nperm)
-                        res_s['variant_id'] = igc.chr_variant_pos.index[var_ix]
-                        if res_s['pval_beta'] <= signif_threshold and res_s['variant_id'] not in variant_set:
-                            res_s.name = phenotype_id
-                            res_s['tss_distance'] = igc.chr_variant_pos[res_s['variant_id']] - igc.phenotype_tss[res_s.name]
+                        variant_id = igc.chr_variant_pos.index[var_ix]
+                        x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+                        if x[0] <= signif_threshold and variant_id not in variant_set:
+                            tss_distance = igc.chr_variant_pos[variant_id] - igc.phenotype_tss[phenotype_id]
+                            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                            res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = x
                             res_s['rank'] = k
                             back_df.append(res_s)
-                            variant_set.add(res_s['variant_id'])
+                            variant_set.add(variant_id)
                     if len(back_df)>0:
                         res_df.append(pd.concat(back_df, axis=1).T)
-                    # print('back')
-                    # print(pd.concat(back_df, axis=1).T)
                 else:  # single variant
                     forward_df['rank'] = 1
                     res_df.append(forward_df)
