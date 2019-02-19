@@ -172,28 +172,11 @@ def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0, re
         return pval_t
 
 
-def _interaction_assoc_row(genotype_t, phenotype_t, icovariates_t, return_sd=False):
-    """
-    genotype_t must be a 1D tensor
-    icovariates_t: [covariates_t, interaction_t]
-    """
-    gi_covariates_t = tf.concat([icovariates_t, tf.reshape(genotype_t, [-1,1])], axis=1)
-    ix_t = tf.reshape(tf.multiply(genotype_t, icovariates_t[:,-1]), [1,-1])  # must be 1 x N
-    return _calculate_corr(ix_t, phenotype_t, gi_covariates_t, return_sd=return_sd)
-
-
-def calculate_association(genotype_t, phenotype_t, covariates_t, interaction_t=None, return_sparse=True, r2_threshold=None, return_r2=False):
+def calculate_association(genotype_t, phenotype_t, covariates_t, return_sparse=True, r2_threshold=None, return_r2=False):
     """Calculate genotype-phenotype associations"""
     maf_t = calculate_maf(genotype_t)
-
-    if interaction_t is None:
-        r2_t = tf.pow(_calculate_corr(genotype_t, phenotype_t, covariates_t), 2)
-        dof = genotype_t.shape[1].value - 2 - covariates_t.shape[1].value
-    else:
-        icovariates_t = tf.concat([covariates_t, interaction_t], axis=1)
-        r2_t = tf.pow(tf.map_fn(lambda x: _interaction_assoc_row(x, phenotype_t, icovariates_t), genotype_t, infer_shape=False), 2)
-        dof = genotype_t.shape[1].value - 4 - covariates_t.shape[1].value
-
+    r2_t = tf.pow(_calculate_corr(genotype_t, phenotype_t, covariates_t), 2)
+    dof = genotype_t.shape[1].value - 2 - covariates_t.shape[1].value
     return calculate_pval(r2_t, dof, maf_t, return_sparse=return_sparse, r2_threshold=r2_threshold, return_r2=return_r2)
 
 
@@ -214,7 +197,7 @@ def initialize_data(phenotype_df, covariates_df, batch_size, interaction_s=None,
         return genotype_t, phenotype_t, covariates_t
     else:
         interaction_t = tf.constant(interaction_s.values, dtype=dtype)
-        interaction_t = tf.reshape(interaction_t, [-1,1])
+        interaction_t = tf.reshape(interaction_t, [1,-1])
         return genotype_t, phenotype_t, covariates_t, interaction_t
 
 #------------------------------------------------------------------------------
@@ -839,39 +822,40 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write('done.')
 
 
-def calculate_nominal_interaction(genotypes_t, phenotype_t, interaction_t, dof, residualizer,
+def calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, dof, residualizer,
                                   interaction_mask_t=None, maf_threshold_interaction=0.05,
-                                  return_sparse=False, tstat_threshold=None):
-    """"""
-    phenotype_t = tf.reshape(phenotype_t, [1,-1])
+                                  return_sparse=False, tstat_threshold=None, batch_offset=0):
+    """
+    genotypes_t:   [num_genotypes x num_samples]
+    phenotype_t:   [num_phenotypes x num_samples]
+    interaction_t: [1 x num_samples]
+    """
     # filter monomorphic sites (to avoid colinearity in X)
     mask_t = ~(tf.reduce_all(tf.equal(genotypes_t, 0), axis=1) |
                tf.reduce_all(tf.equal(genotypes_t, 1), axis=1) |
-               tf.reduce_all(tf.equal(genotypes_t, 2), axis=1)
-               )
+               tf.reduce_all(tf.equal(genotypes_t, 2), axis=1))
 
     if interaction_mask_t is not None:
         upper_t = tf.boolean_mask(genotypes_t, interaction_mask_t, axis=1)
         lower_t = tf.boolean_mask(genotypes_t, ~interaction_mask_t, axis=1)
         mask_t = (mask_t &
                   (calculate_maf(upper_t) >= maf_threshold_interaction) &
-                  (calculate_maf(lower_t) >= maf_threshold_interaction)
-                  )
+                  (calculate_maf(lower_t) >= maf_threshold_interaction))
 
     mask_t.set_shape([None])  # required for tf.boolean_mask
     genotypes_t = tf.boolean_mask(genotypes_t, mask_t)
 
     s = tf.shape(genotypes_t)
-    ng = s[0]
-    ns = tf.cast(s[1], tf.float32)
+    ng = s[0]  # genotypes
+    ns = tf.cast(s[1], tf.float32)  # samples
+    nps = phenotype_t.get_shape()[0]
 
+    # centered inputs
     g0_t = genotypes_t - tf.reduce_mean(genotypes_t, axis=1, keepdims=True)
     gi_t = tf.multiply(genotypes_t, interaction_t)
     gi0_t = gi_t - tf.reduce_mean(gi_t, axis=1, keepdims=True)
-
     i0_t = interaction_t - tf.reduce_mean(interaction_t)
-    p_t = tf.reshape(phenotype_t, [1,-1])
-    p0_t = p_t - tf.reduce_mean(p_t, axis=1, keepdims=True)
+    p0_t = phenotype_t - tf.reduce_mean(phenotype_t, axis=1, keepdims=True)
 
     # residualize rows
     g0_t = residualizer.transform(g0_t, center=False)
@@ -881,37 +865,65 @@ def calculate_nominal_interaction(genotypes_t, phenotype_t, interaction_t, dof, 
     i0_t = tf.tile(i0_t, [ng, 1])
 
     # regression
-    X_t = tf.stack([g0_t, i0_t, gi0_t], axis=2)
-    Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))
-    b_t = tf.matmul(tf.matmul(Xinv, X_t, transpose_b=True), tf.tile(tf.reshape(p0_t, [1,1,-1]), [ng,1,1]), transpose_b=True)
+    X_t = tf.stack([g0_t, i0_t, gi0_t], axis=2)  # ng x ns x 3
+    Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))  # ng x 3 x 3
+    p0_tile_t = tf.tile(tf.expand_dims(p0_t, 0), [ng,1,1])  # ng x np x ns
 
     # calculate b, b_se
-    r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t
-    rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
-    Cx = Xinv * tf.reshape(rss_t, [-1,1,1]) / dof
-    b_se_t = tf.sqrt(tf.matrix_diag_part(Cx))
-    b_t = tf.squeeze(b_t)
-    tstat_t = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))
+    # [(ng x 3 x 3) x (ng x 3 x ns)] x (ng x ns x np) = (ng x 3 x np)
+    b_t = tf.matmul(tf.matmul(Xinv, X_t, transpose_b=True), p0_tile_t, transpose_b=True)
+    if nps==1:
+        r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
+        rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
+        b_se_t = tf.sqrt( tf.matrix_diag_part(Xinv) * tf.expand_dims(rss_t, 1) / dof )
+        b_t = tf.squeeze(b_t)
+    else:
+        # b_t = tf.matmul(p0_tile_t, tf.matmul(Xinv, X_t, transpose_b=True), transpose_b=True)
+        # convert to ng x np x 3??
+        r_t = tf.matmul(X_t, b_t) - tf.transpose(p0_tile_t, [0,2,1])  # (ng x ns x np)
+        rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)  # ng x np
+        b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
+
+    tstat_t = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))  # (ng x 3 x np)
     # weird tf bug? without cast/copy, divide appears to modify b_se_t??
-    # calculate pval
-    tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
-    pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))
 
     # calculate MAF
     n2 = 2*ns
     af_t = tf.reduce_sum(genotypes_t,1) / n2
     ix_t = af_t<=0.5
     maf_t = tf.where(ix_t, af_t, 1-af_t)
-    # calculate MA samples and counts
-    m = tf.cast(genotypes_t>0.5, tf.float32)
-    a = tf.reduce_sum(m, 1)
-    b = tf.reduce_sum(tf.cast(genotypes_t<1.5, tf.float32), 1)
-    ma_samples_t = tf.where(ix_t, a, b)
-    m = tf.multiply(m, genotypes_t)
-    a = tf.reduce_sum(m, 1)
-    ma_count_t = tf.where(ix_t, a, n2-a)
 
-    return pval_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t, mask_t
+    tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
+    if not return_sparse:
+        # calculate pval
+        pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))
+
+        # calculate MA samples and counts
+        m = tf.cast(genotypes_t>0.5, tf.float32)
+        a = tf.reduce_sum(m, 1)
+        b = tf.reduce_sum(tf.cast(genotypes_t<1.5, tf.float32), 1)
+        ma_samples_t = tf.where(ix_t, a, b)
+        m = tf.multiply(m, genotypes_t)
+        a = tf.reduce_sum(m, 1)
+        ma_count_t = tf.where(ix_t, a, n2-a)
+
+        return pval_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t, mask_t
+    else:
+        tstat_g_t =  tf.squeeze(tstat_t[:,0,:])
+        tstat_i_t =  tf.squeeze(tstat_t[:,1,:])
+        tstat_gi_t = tf.squeeze(tstat_t[:,2,:])
+        ix = tf.where(tf.abs(tstat_gi_t)>=tstat_threshold, name='threshold_tstat')
+
+        # convert ix positions to reference (i.e., undo masking by mask_t)
+        ix2 = tf.concat([tf.gather(tf.where(mask_t), ix[:,0])+batch_offset, tf.expand_dims(ix[:,1],-1)], axis=1)
+
+        dims = tf.cast(tf.shape(tstat_g_t), tf.int64)
+        pval_g_t =  tf.SparseTensor(ix2, tf.scalar_mul(2, tdist.cdf(-tf.abs(tf.gather_nd(tstat_g_t, ix)))), dims)
+        pval_i_t =  tf.SparseTensor(ix2, tf.scalar_mul(2, tdist.cdf(-tf.abs(tf.gather_nd(tstat_i_t, ix)))), dims)
+        pval_gi_t = tf.SparseTensor(ix2, tf.scalar_mul(2, tdist.cdf(-tf.abs(tf.gather_nd(tstat_gi_t, ix)))), dims)
+
+        maf_t = tf.gather(maf_t, ix[:,0])
+        return pval_g_t, pval_i_t, pval_gi_t, maf_t
 
 
 def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
@@ -951,7 +963,7 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
             iterator = dataset.make_one_shot_iterator()
             next_phenotype, next_genotypes, _, next_id = iterator.get_next()
 
-            x = calculate_nominal_interaction(next_genotypes, next_phenotype, interaction_t, dof, residualizer,
+            x = calculate_interaction_nominal(next_genotypes, tf.reshape(next_phenotype, [1,-1]), interaction_t, dof, residualizer,
                                       interaction_mask_t=interaction_mask_t, maf_threshold_interaction=0.05)
 
             chr_res_df = []
@@ -1033,14 +1045,18 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     ix_t = get_sample_indexes(genotype_df.columns.tolist(), phenotype_df)
     next_element = tf.gather(next_element, ix_t, axis=1)
 
+    if interaction_s is None:
+        dof = n_samples - 2 - covariates_df.shape[1]
+    else:
+        dof = n_samples - 4 - covariates_df.shape[1]
+
     # calculate correlation threshold for sparse output
     if return_sparse:
-        dof = n_samples - 2 - covariates_df.shape[1]
-        tstat_threshold = stats.t.ppf(pval_threshold/2, dof)
+        tstat_threshold = stats.t.ppf(1-pval_threshold/2, dof)
         r2_threshold = tstat_threshold**2 / (dof + tstat_threshold**2)
     else:
-        r2_threshold = None
         tstat_threshold = None
+        r2_threshold = None
 
     if interaction_s is None:
         genotypes, phenotypes, covariates = initialize_data(phenotype_df, covariates_df,
@@ -1048,84 +1064,166 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         # with tf.device('/gpu:0'):
         x = calculate_association(genotypes, phenotypes, covariates, return_sparse=return_sparse,
                                   r2_threshold=r2_threshold, return_r2=return_r2)
-    else:
-        genotypes, phenotypes, covariates, interaction = initialize_data(phenotype_df, covariates_df,
-                                                                         batch_size=batch_size, interaction_s=interaction_s)
-        x = calculate_association(genotypes, phenotypes, covariates, interaction_t=interaction,
-                                  return_sparse=return_sparse, r2_threshold=r2_threshold)
 
+        init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
-    init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+        start_time = time.time()
+        if verbose:
+            print('  Mapping batches')
+        with tf.Session() as sess:
+            # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            # run_metadata = tf.RunMetadata()
+            # writer = tf.summary.FileWriter('logs', sess.graph, session=sess)
+            sess.run(init_op)
+            pval_list = []
+            maf_list = []
+            r2_list = []
+            for i in range(1, ggt.num_batches+1):
+                if verbose:
+                    sys.stdout.write('\r  * processing batch {}/{}'.format(i, ggt.num_batches))
+                    sys.stdout.flush()
 
-    start_time = time.time()
-    if verbose:
-        print('  Mapping batches')
-    with tf.Session() as sess:
-        # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        # run_metadata = tf.RunMetadata()
-        # writer = tf.summary.FileWriter('logs', sess.graph, session=sess)
-        sess.run(init_op)
-        pval_list = []
-        maf_list = []
-        r2_list = []
-        for i in range(1, ggt.num_batches+1):
-            if verbose:
-                sys.stdout.write('\r  * processing batch {}/{}'.format(i, ggt.num_batches))
-                sys.stdout.flush()
+                g_iter = sess.run(next_element)
+                # x: p_values, maf, {r2}
+                p_ = sess.run(x, feed_dict={genotypes:g_iter})#, options=run_options, run_metadata=run_metadata)
+                # writer.add_run_metadata(run_metadata, 'batch{}'.format(i))
 
-            g_iter = sess.run(next_element)
-            # x: p_values, maf, {r2}
-            p_ = sess.run(x, feed_dict={genotypes:g_iter})#, options=run_options, run_metadata=run_metadata)
-            # writer.add_run_metadata(run_metadata, 'batch{}'.format(i))
+                pval_list.append(p_[0])
+                maf_list.append(p_[1])
+                if return_r2:
+                    r2_list.append(p_[2])
 
-            pval_list.append(p_[0])
-            maf_list.append(p_[1])
+            if return_sparse:
+                pval = tf.sparse_concat(0, pval_list).eval()
+            else:
+                pval = tf.concat(pval_list, 0).eval()
+            maf = tf.concat(maf_list, 0).eval()
             if return_r2:
-                r2_list.append(p_[2])
+                r2 = tf.concat(r2_list, 0).eval()
+            if verbose:
+                print()
+            # writer.close()
+        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
         if return_sparse:
-            pval = tf.sparse_concat(0, pval_list).eval()
+            ix = pval.indices[:,0]<n_variants  # truncate last batch
+            v = [variant_dict[i] for i in pval.indices[ix,0]]
+            if phenotype_df.shape[0]>1:
+                phenotype_ids = phenotype_df.index[pval.indices[ix,1]]
+            else:
+                phenotype_ids = phenotype_df.index.tolist()*len(pval.values)
+            pval_df = pd.DataFrame(
+                np.array([v, phenotype_ids, pval.values[ix], maf[ix]]).T,
+                columns=['variant_id', 'phenotype_id', 'pval', 'maf']
+            )
+            pval_df['pval'] = pval_df['pval'].astype(np.float64)
+            pval_df['maf'] = pval_df['maf'].astype(np.float32)
+            if return_r2:
+                pval_df['r2'] = r2[ix].astype(np.float32)
         else:
-            pval = tf.concat(pval_list, 0).eval()
-        maf = tf.concat(maf_list, 0).eval()
-        if return_r2:
-            r2 = tf.concat(r2_list, 0).eval()
+            # truncate last batch
+            pval = pval[:n_variants]
+            maf = maf[:n_variants]
+            # add indices
+            pval_df = pd.DataFrame(pval, index=variant_ids, columns=[i for i in phenotype_df.index])
+            pval_df['maf'] = maf
+            pval_df.index.name = 'variant_id'
+
+        if maf_threshold is not None and maf_threshold>0:
+            logger.write('  * filtering output by MAF >= {}'.format(maf_threshold))
+            pval_df = pval_df[pval_df['maf']>=maf_threshold]
+
+        logger.write('done.')
+    else:  # interaction
+        genotypes_t, phenotypes_t, covariates_t, interaction_t = initialize_data(phenotype_df, covariates_df,
+                                                                         batch_size=batch_size, interaction_s=interaction_s)
+
+        interaction_mask_t = tf.constant(interaction_s >= interaction_s.median())
+        residualizer = Residualizer(covariates_t)
+
+        init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+
+
+        batch_offset = tf.placeholder(tf.int64, shape=None)
+
+        x = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, dof, residualizer,
+                                  interaction_mask_t=interaction_mask_t, maf_threshold_interaction=maf_threshold,
+                                  return_sparse=return_sparse, tstat_threshold=tstat_threshold, batch_offset=batch_offset)
+
+        start_time = time.time()
         if verbose:
-            print()
-        # writer.close()
+            print('  Mapping batches')
+        with tf.Session() as sess:
+            sess.run(init_op)
+            pval_g_list = []
+            pval_i_list = []
+            pval_gi_list = []
+            maf_list = []
+            for i in range(0, ggt.num_batches):
+                if verbose:
+                    sys.stdout.write('\r  * processing batch {}/{}'.format(i+1, ggt.num_batches))
+                    sys.stdout.flush()
 
-    logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+                g_iter = sess.run(next_element)
+                pval_g, pval_i, pval_gi, maf = sess.run(x, feed_dict={genotypes_t:g_iter, batch_offset:i*batch_size})
+                pval_g_list.append(pval_g)
+                pval_i_list.append(pval_i)
+                pval_gi_list.append(pval_gi)
+                maf_list.append(maf)
 
-    if return_sparse:
-        ix = pval.indices[:,0]<n_variants  # truncate last batch
-        v = [variant_dict[i] for i in pval.indices[ix,0]]
-        if phenotype_df.shape[0]>1:
-            phenotype_ids = phenotype_df.index[pval.indices[ix,1]]
-        else:
-            phenotype_ids = phenotype_df.index.tolist()*len(pval.values)
-        pval_df = pd.DataFrame(
-            np.array([v, phenotype_ids, pval.values[ix], maf[ix]]).T,
-            columns=['variant_id', 'phenotype_id', 'pval', 'maf']
-        )
-        pval_df['pval'] = pval_df['pval'].astype(np.float64)
-        pval_df['maf'] = pval_df['maf'].astype(np.float32)
-        if return_r2:
-            pval_df['r2'] = r2[ix].astype(np.float32)
-    else:
-        # truncate last batch
-        pval = pval[:n_variants]
-        maf = maf[:n_variants]
-        # add indices
-        pval_df = pd.DataFrame(pval, index=variant_ids, columns=[i for i in phenotype_df.index])
-        pval_df['maf'] = maf
-        pval_df.index.name = 'variant_id'
+            if verbose:
+                print()
+            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
-    if maf_threshold is not None and maf_threshold>0:
-        logger.write('  * filtering output by MAF >= {}'.format(maf_threshold))
-        pval_df = pval_df[pval_df['maf']>=maf_threshold]
+            if return_sparse:
+                # concatenate outputs
+                dense_shape = [genotype_df.shape[0], phenotype_df.shape[0]]
+                pval_g = concat_sparse(pval_g_list, dense_shape)
+                pval_i = concat_sparse(pval_i_list, dense_shape)
+                pval_gi = concat_sparse(pval_gi_list, dense_shape)
+                maf = np.concatenate(maf_list)
 
-    logger.write('done.')
+                v = [variant_dict[i] for i in pval_g.indices[:,0]]
+                if phenotype_df.shape[0]>1:
+                    phenotype_ids = phenotype_df.index[pval_g.indices[:,1]]
+                else:
+                    phenotype_ids = phenotype_df.index.tolist()*len(pval_g.values)
+
+                pval_df = pd.DataFrame(
+                    np.array([v, phenotype_ids, pval_g.values, pval_i.values, pval_gi.values, maf]).T,
+                    columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'maf']
+                ).infer_objects()
+                pval_df['maf'] = pval_df['maf'].astype(np.float32)
+            else:
+                raise ValueError('Not yet implemented')
+                maf = tf.concat(maf_list, 0).eval()
+                pval_g = tf.concat(pval_g_list, 0).eval()[:n_variants]
+                pval_i = tf.concat(pval_i_list, 0).eval()[:n_variants]
+                pval_gi = tf.concat(pval_gi_list, 0).eval()[:n_variants]
+                maf = maf[:n_variants]
+                # add indices
+                pval_g_df = pd.DataFrame(pval_g, index=variant_ids, columns=phenotype_df.index)
+                pval_i_df = pd.DataFrame(pval_i, index=variant_ids, columns=phenotype_df.index)
+                pval_gi_df = pd.DataFrame(pval_gi, index=variant_ids, columns=phenotype_df.index)
+                pval_g_df.index.name = 'variant_id'
+                pval_i_df.index.name = 'variant_id'
+                pval_gi_df.index.name = 'variant_id'
+                return pval_g_df, pval_i_df, pval_gi_df, maf
+
     return pval_df
+
+
+def concat_sparse(stv_list, dense_shape):
+    """Concatenate list of SparseTensorValue outputs"""
+    # check dimensions (first dimension may be masked, ignore)
+    assert np.all([i.dense_shape[1]==stv_list[0].dense_shape[1] for i in stv_list])
+    values = np.concatenate([i.values for i in stv_list])
+    indices = np.concatenate([i.indices for i in stv_list])
+    # truncate last batch
+    ix = indices[:,0] < dense_shape[0]
+    indices = indices[ix,:]
+    values = values[ix]
+    return tf.SparseTensorValue(indices, values, dense_shape)
 
 
 def map_trans_permutations(genotype_input, phenotype_df, covariates_df, permutations=None,
