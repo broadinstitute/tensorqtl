@@ -1633,7 +1633,7 @@ def main():
         logger.write('  * reading interaction term ({})'.format(args.interaction))
         interaction_s = pd.read_csv(args.interaction, sep='\t', index_col=0, header=None, squeeze=True)
         assert covariates_df.index.isin(interaction_s.index).all()
-        interaction_s = interaction_s.loc[covariates_df.index]
+        interaction_s = interaction_s.loc[covariates_df.index].astype(np.float32)
     else:
         interaction_s = None
 
