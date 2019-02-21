@@ -896,7 +896,7 @@ def calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, dof, 
     tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     if not return_sparse:
         # calculate pval
-        pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))
+        pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))  # (ng x 3 x np)
 
         # calculate MA samples and counts
         m = tf.cast(genotypes_t>0.5, tf.float32)
@@ -1153,62 +1153,80 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         start_time = time.time()
         if verbose:
             print('  Mapping batches')
-        with tf.Session() as sess:
-            sess.run(init_op)
-            pval_g_list = []
-            pval_i_list = []
-            pval_gi_list = []
-            maf_list = []
-            for i in range(0, ggt.num_batches):
+        if return_sparse:
+            with tf.Session() as sess:
+                sess.run(init_op)
+                pval_g_list = []
+                pval_i_list = []
+                pval_gi_list = []
+                maf_list = []
+                for i in range(0, ggt.num_batches):
+                    if verbose:
+                        sys.stdout.write('\r  * processing batch {}/{}'.format(i+1, ggt.num_batches))
+                        sys.stdout.flush()
+                    g_iter = sess.run(next_element)
+                    pval_g, pval_i, pval_gi, maf = sess.run(x, feed_dict={genotypes_t:g_iter, batch_offset:i*batch_size})
+                    pval_g_list.append(pval_g)
+                    pval_i_list.append(pval_i)
+                    pval_gi_list.append(pval_gi)
+                    maf_list.append(maf)
                 if verbose:
-                    sys.stdout.write('\r  * processing batch {}/{}'.format(i+1, ggt.num_batches))
-                    sys.stdout.flush()
+                    print()
+                logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
-                g_iter = sess.run(next_element)
-                pval_g, pval_i, pval_gi, maf = sess.run(x, feed_dict={genotypes_t:g_iter, batch_offset:i*batch_size})
-                pval_g_list.append(pval_g)
-                pval_i_list.append(pval_i)
-                pval_gi_list.append(pval_gi)
-                maf_list.append(maf)
+            # concatenate outputs
+            dense_shape = [genotype_df.shape[0], phenotype_df.shape[0]]
+            pval_g = concat_sparse(pval_g_list, dense_shape)
+            pval_i = concat_sparse(pval_i_list, dense_shape)
+            pval_gi = concat_sparse(pval_gi_list, dense_shape)
+            maf = np.concatenate(maf_list)
 
-            if verbose:
-                print()
-            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-
-            if return_sparse:
-                # concatenate outputs
-                dense_shape = [genotype_df.shape[0], phenotype_df.shape[0]]
-                pval_g = concat_sparse(pval_g_list, dense_shape)
-                pval_i = concat_sparse(pval_i_list, dense_shape)
-                pval_gi = concat_sparse(pval_gi_list, dense_shape)
-                maf = np.concatenate(maf_list)
-
-                v = [variant_dict[i] for i in pval_g.indices[:,0]]
-                if phenotype_df.shape[0]>1:
-                    phenotype_ids = phenotype_df.index[pval_g.indices[:,1]]
-                else:
-                    phenotype_ids = phenotype_df.index.tolist()*len(pval_g.values)
-
-                pval_df = pd.DataFrame(
-                    np.array([v, phenotype_ids, pval_g.values, pval_i.values, pval_gi.values, maf]).T,
-                    columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'maf']
-                ).infer_objects()
-                pval_df['maf'] = pval_df['maf'].astype(np.float32)
+            v = [variant_dict[i] for i in pval_g.indices[:,0]]
+            if phenotype_df.shape[0]>1:
+                phenotype_ids = phenotype_df.index[pval_g.indices[:,1]]
             else:
-                raise ValueError('Not yet implemented')
-                maf = tf.concat(maf_list, 0).eval()
-                pval_g = tf.concat(pval_g_list, 0).eval()[:n_variants]
-                pval_i = tf.concat(pval_i_list, 0).eval()[:n_variants]
-                pval_gi = tf.concat(pval_gi_list, 0).eval()[:n_variants]
-                maf = maf[:n_variants]
-                # add indices
-                pval_g_df = pd.DataFrame(pval_g, index=variant_ids, columns=phenotype_df.index)
-                pval_i_df = pd.DataFrame(pval_i, index=variant_ids, columns=phenotype_df.index)
-                pval_gi_df = pd.DataFrame(pval_gi, index=variant_ids, columns=phenotype_df.index)
-                pval_g_df.index.name = 'variant_id'
-                pval_i_df.index.name = 'variant_id'
-                pval_gi_df.index.name = 'variant_id'
-                return pval_g_df, pval_i_df, pval_gi_df, maf
+                phenotype_ids = phenotype_df.index.tolist()*len(pval_g.values)
+
+            pval_df = pd.DataFrame(
+                np.array([v, phenotype_ids, pval_g.values, pval_i.values, pval_gi.values, maf]).T,
+                columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'maf']
+            ).infer_objects()
+            pval_df['maf'] = pval_df['maf'].astype(np.float32)
+        else:
+            # raise ValueError('Not yet implemented')
+            with tf.Session() as sess:
+                sess.run(init_op)
+                output_list = []
+                for i in range(0, ggt.num_batches):
+                    if verbose:
+                        sys.stdout.write('\r  * processing batch {}/{}'.format(i+1, ggt.num_batches))
+                        sys.stdout.flush()
+                    g_iter = sess.run(next_element)
+                    # pval, b, b_se, maf, ma_samples, ma_count, mask
+                    res = sess.run(x, feed_dict={genotypes_t:g_iter, batch_offset:i*batch_size})
+                    output_list.append(res)
+                if verbose:
+                    print()
+                logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+            # concatenate outputs
+            pval = np.concatenate([i[0] for i in output_list])[:n_variants]
+            b = np.concatenate([i[1] for i in output_list])[:n_variants]
+            b_se = np.concatenate([i[2] for i in output_list])[:n_variants]
+            # genotype-related outputs
+            maf = np.concatenate([i[3] for i in output_list])[:n_variants]
+            ma_samples = np.concatenate([i[4] for i in output_list])[:n_variants]
+            ma_count = np.concatenate([i[5] for i in output_list])[:n_variants]
+            mask = np.concatenate([i[6] for i in output_list])[:n_variants]
+
+            variant_ids = np.array(variant_ids)[mask]
+            pval_g_df = pd.DataFrame(pval[:,0,:], index=variant_ids, columns=phenotype_df.index)
+            pval_i_df = pd.DataFrame(pval[:,1,:], index=variant_ids, columns=phenotype_df.index)
+            pval_gi_df = pd.DataFrame(pval[:,2,:], index=variant_ids, columns=phenotype_df.index)
+            maf_s = pd.Series(maf, index=variant_ids, name='maf').astype(np.float32)
+            ma_samples_s = pd.Series(ma_samples, index=variant_ids, name='maf').astype(np.int32)
+            ma_count_s = pd.Series(ma_count, index=variant_ids, name='maf').astype(np.int32)
+
+            return pval_g_df, pval_i_df, pval_gi_df, maf_s, ma_samples_s, ma_count_s
 
     return pval_df
 
