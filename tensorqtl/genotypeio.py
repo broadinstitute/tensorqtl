@@ -203,8 +203,7 @@ class PlinkReader(object):
         self.variant_pos = {i:g['pos'] for i,g in self.bim.set_index('snp')[['chrom', 'pos']].groupby('chrom')}
         self.variant_pos_dict = self.bim.set_index('snp')['pos'].to_dict()
 
-    def get_region(self, region_str, impute=True, verbose=False):
-        """Get genotypes for a region defined by 'chr:start-end' or 'chr'"""
+    def get_region_index(self, region_str, return_pos=False):
         s = region_str.split(':')
         chrom = s[0]
         c = self.bim[self.bim['chrom']==chrom]
@@ -213,10 +212,18 @@ class PlinkReader(object):
             start = int(start)
             end = int(end)
             c = c[(c['pos']>=start) & (c['pos']<=end)]
-        g = self.bed[c.i.values, :].compute()
+        if return_pos:
+            return c['i'].values, c.set_index('snp')['pos']
+        else:
+            return c['i'].values
+
+    def get_region(self, region_str, impute=True, verbose=False):
+        """Get genotypes for a region defined by 'chr:start-end' or 'chr'"""
+        ix, pos_s = self.get_region_index(region_str, return_pos=True)
+        g = self.bed[ix, :].compute()
         if impute:
             _impute_mean(g, verbose=verbose)
-        return g, c.set_index('snp')['pos']
+        return g, pos_s
 
     def get_genotypes(self, variant_ids, impute=False, verbose=False):
         """Load genotypes corresponding to variant IDs"""
