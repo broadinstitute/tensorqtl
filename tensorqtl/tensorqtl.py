@@ -929,7 +929,8 @@ def calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, dof, 
 
 
 def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
-                                prefix, maf_threshold_interaction=0.05, best_only=False, output_dir='.', logger=None):
+                                prefix, maf_threshold_interaction=0.05, best_only=False, group_s=None,
+                                output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -938,6 +939,8 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
     """
     if logger is None:
         logger = SimpleLogger()
+    if group_s is not None:
+        group_dict = group_s.to_dict()
 
     logger.write('cis-QTL mapping: nominal associations for all variant-phenotype pairs')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
@@ -965,10 +968,13 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
             iterator = dataset.make_one_shot_iterator()
             next_phenotype, next_genotypes, _, next_id = iterator.get_next()
 
-            x = calculate_interaction_nominal(next_genotypes, tf.reshape(next_phenotype, [1,-1]), interaction_t, dof, residualizer,
-                                      interaction_mask_t=interaction_mask_t, maf_threshold_interaction=0.05)
+            x = calculate_interaction_nominal(next_genotypes, tf.reshape(next_phenotype, [1,-1]),
+                                              interaction_t, dof, residualizer,
+                                              interaction_mask_t=interaction_mask_t,
+                                              maf_threshold_interaction=maf_threshold_interaction)
 
             chr_res_df = []
+            prev_phenotype_id = None
             for i in range(1, igc.n_phenotypes+1):
                 (pval, b, b_se, maf, ma_samples, ma_count, maf_mask), phenotype_id = sess.run([x, next_id])
 
@@ -999,6 +1005,13 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
                 ]))
                 if best_only:
                     best_assoc.append(df.loc[df['pval_gi'].idxmin()])
+                elif group_s is not None:
+                    if group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
+                        ix = df['pval_gi'] < chr_res_df[-1]['pval_gi']
+                        chr_res_df[-1].loc[ix] = df.loc[ix]
+                    else:
+                        chr_res_df.append(df)
+                    prev_phenotype_id = phenotype_id
                 else:
                     chr_res_df.append(df)
                 print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
