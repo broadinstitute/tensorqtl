@@ -878,7 +878,7 @@ def calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, dof, 
         r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
         rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
         b_se_t = tf.sqrt( tf.matrix_diag_part(Xinv) * tf.expand_dims(rss_t, 1) / dof )
-        b_t = tf.squeeze(b_t)
+        b_t = tf.squeeze(b_t, axis=2)
     else:
         # b_t = tf.matmul(p0_tile_t, tf.matmul(Xinv, X_t, transpose_b=True), transpose_b=True)
         # convert to ng x np x 3??
@@ -952,7 +952,10 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
     covariates_t = tf.constant(covariates_df.values, dtype=tf.float32)
     dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
     interaction_t = tf.constant(interaction_s.values.reshape(1,-1), dtype=tf.float32)  # 1 x n
-    interaction_mask_t = tf.constant(interaction_s >= interaction_s.median())
+    if maf_threshold_interaction>0:
+        interaction_mask_t = tf.constant(interaction_s >= interaction_s.median())
+    else:
+        interaction_mask_t = None
     residualizer = Residualizer(covariates_t)
 
     with tf.Session() as sess:
