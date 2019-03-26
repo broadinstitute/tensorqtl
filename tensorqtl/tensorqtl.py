@@ -948,6 +948,8 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(plink_reader.bed.shape[0]))
     logger.write('  * including interaction term')
+    if maf_threshold_interaction>0:
+        logger.write('  * using {:.2f} MAF threshold'.format(maf_threshold_interaction))
 
     covariates_t = tf.constant(covariates_df.values, dtype=tf.float32)
     dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
