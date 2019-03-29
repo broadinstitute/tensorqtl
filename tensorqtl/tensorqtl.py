@@ -1008,9 +1008,8 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
                     ('b_gi', b[:,2]),
                     ('b_gi_se', b_se[:,2]),
                 ]))
-                if best_only:
-                    best_assoc.append(df.loc[df['pval_gi'].idxmin()])
-                elif group_s is not None:
+                best_assoc.append(df.loc[df['pval_gi'].idxmin()])
+                if group_s is not None:
                     if group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
                         ix = df['pval_gi'] < chr_res_df[-1]['pval_gi']
                         chr_res_df[-1].loc[ix] = df.loc[ix]
@@ -1025,11 +1024,10 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
             if not best_only:
                 print('  * writing output')
                 pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
-        if best_only:
-            pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects().to_csv(
-                    os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
-                    sep='\t', float_format='%.6g', compression='gzip'
-                )
+
+        pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects().to_csv(
+                os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
+                sep='\t', float_format='%.6g', compression='gzip')
     logger.write('done.')
 
 
