@@ -332,7 +332,7 @@ def _process_group_permutations(buf):
 
 
 def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, genotype_df=None,
-            group_s=None, beta_approx=True, nperm=10000, logger=None, seed=None):
+            group_s=None, beta_approx=True, nperm=10000, window=1000000, logger=None, seed=None):
     """Run cis-QTL mapping"""
     assert np.all(phenotype_df.columns==covariates_df.index)
     if logger is None:
@@ -368,7 +368,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, genotyp
         ix_t = get_sample_indexes(genotype_df.columns.tolist(), phenotype_df.columns)
 
         with tf.Session() as sess:
-            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df, phenotype_pos_df, genotype_df=genotype_df)
+            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df, phenotype_pos_df, genotype_df=genotype_df, window=window)
             dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
             dataset = dataset.prefetch(1)
             iterator = dataset.make_one_shot_iterator()
@@ -430,7 +430,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, genotyp
         with tf.Session() as sess:
             for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
                 logger.write('  Mapping chromosome {}'.format(chrom))
-                igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+                igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df, window=window)
 
                 dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
                 dataset = dataset.prefetch(1)
@@ -497,7 +497,8 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, genotyp
     return res_df.astype(output_dtype_dict).infer_objects()
 
 
-def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, fdr=0.05, fdr_col='qval', nperm=10000, logger=None, seed=None):
+def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
+                        fdr=0.05, fdr_col='qval', nperm=10000, window=1000000, logger=None, seed=None):
     """
     Run independent cis-QTL mapping (forward-backward regression)
 
@@ -550,7 +551,7 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
     with tf.Session() as sess:
         for chrom in phenotype_pos_df['chr'].unique():
             logger.write('  Mapping chromosome {}'.format(chrom))
-            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df, window=window)
             ix_dict = {i:k for k,i in enumerate(plink_reader.bim.loc[plink_reader.bim['chrom']==chrom, 'snp'])}
 
             igc.chr_genotypes, igc.chr_variant_pos = igc.plink_reader.get_region(chrom, verbose=False)
@@ -761,7 +762,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, covariates_t, dof):
 
 
 def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, prefix,
-                    output_dir='.', logger=None):
+                    window=1000000, output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -788,7 +789,7 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
         start_time = time.time()
         for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
             logger.write('  Mapping chromosome {}'.format(chrom))
-            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df, window=window)
 
             dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
             dataset = dataset.prefetch(1)
@@ -930,7 +931,7 @@ def calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, dof, 
 
 def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
                                 prefix, maf_threshold_interaction=0.05, best_only=False, group_s=None,
-                                output_dir='.', logger=None):
+                                window=1000000, output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -966,7 +967,7 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
         best_assoc = []
         for chrom in phenotype_pos_df.loc[phenotype_df.index, 'chr'].unique():
             logger.write('  Mapping chromosome {}'.format(chrom))
-            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df)
+            igc = genotypeio.InputGeneratorCis(plink_reader, phenotype_df.loc[phenotype_pos_df['chr']==chrom], phenotype_pos_df, window=window)
 
             dataset = tf.data.Dataset.from_generator(igc.generate_data, output_types=(tf.float32, tf.float32, tf.int32, tf.string))
             dataset = dataset.prefetch(1)
@@ -982,42 +983,42 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
             prev_phenotype_id = None
             for i in range(1, igc.n_phenotypes+1):
                 (pval, b, b_se, maf, ma_samples, ma_count, maf_mask), phenotype_id = sess.run([x, next_id])
-
                 phenotype_id = phenotype_id.decode()
-                r = igc.cis_ranges[phenotype_id]
-                variant_ids = plink_reader.variant_pos[chrom].index[r[0]:r[1]+1]
-                tss_distance = np.int32(plink_reader.variant_pos[chrom].values[r[0]:r[1]+1] - igc.phenotype_tss[phenotype_id])
-                if maf_mask is not None:
-                    variant_ids = variant_ids[maf_mask]
-                    tss_distance = tss_distance[maf_mask]
-                nv = len(variant_ids)
-                df = pd.DataFrame(OrderedDict([
-                    ('phenotype_id', [phenotype_id]*nv),
-                    ('variant_id', variant_ids),
-                    ('tss_distance', tss_distance),
-                    ('maf', maf),
-                    ('ma_samples', np.int32(ma_samples)),
-                    ('ma_count', np.int32(ma_count)),
-                    ('pval_g', pval[:,0]),
-                    ('b_g', b[:,0]),
-                    ('b_g_se', b_se[:,0]),
-                    ('pval_i', pval[:,1]),
-                    ('b_i', b[:,1]),
-                    ('b_i_se', b_se[:,1]),
-                    ('pval_gi', pval[:,2]),
-                    ('b_gi', b[:,2]),
-                    ('b_gi_se', b_se[:,2]),
-                ]))
-                best_assoc.append(df.loc[df['pval_gi'].idxmin()])
-                if group_s is not None:
-                    if group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
+
+                if len(pval)>0:
+                    r = igc.cis_ranges[phenotype_id]
+                    variant_ids = plink_reader.variant_pos[chrom].index[r[0]:r[1]+1]
+                    tss_distance = np.int32(plink_reader.variant_pos[chrom].values[r[0]:r[1]+1] - igc.phenotype_tss[phenotype_id])
+                    if maf_mask is not None:
+                        variant_ids = variant_ids[maf_mask]
+                        tss_distance = tss_distance[maf_mask]
+                    nv = len(variant_ids)
+                    df = pd.DataFrame(OrderedDict([
+                        ('phenotype_id', [phenotype_id]*nv),
+                        ('variant_id', variant_ids),
+                        ('tss_distance', tss_distance),
+                        ('maf', maf),
+                        ('ma_samples', np.int32(ma_samples)),
+                        ('ma_count', np.int32(ma_count)),
+                        ('pval_g', pval[:,0]),
+                        ('b_g', b[:,0]),
+                        ('b_g_se', b_se[:,0]),
+                        ('pval_i', pval[:,1]),
+                        ('b_i', b[:,1]),
+                        ('b_i_se', b_se[:,1]),
+                        ('pval_gi', pval[:,2]),
+                        ('b_gi', b[:,2]),
+                        ('b_gi_se', b_se[:,2]),
+                    ]))
+                    best_assoc.append(df.loc[df['pval_gi'].idxmin()])
+
+                    if group_s is not None and group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
                         ix = df['pval_gi'] < chr_res_df[-1]['pval_gi']
                         chr_res_df[-1].loc[ix] = df.loc[ix]
                     else:
                         chr_res_df.append(df)
-                    prev_phenotype_id = phenotype_id
-                else:
-                    chr_res_df.append(df)
+
+                prev_phenotype_id = phenotype_id
                 print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
             print()
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
@@ -1674,7 +1675,8 @@ def main():
     if args.mode.startswith('cis'):
         pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns)
         if args.mode=='cis':
-            res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, group_s=group_s, nperm=args.permutations, logger=logger, seed=args.seed)
+            res_df = map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df,
+                             group_s=group_s, nperm=args.permutations, window=args.window, logger=logger, seed=args.seed)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             if has_rpy2 and group_s is None:
@@ -1683,16 +1685,16 @@ def main():
         elif args.mode=='cis_nominal':
             if interaction_s is None:
                 map_cis_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
-                                output_dir=args.output_dir, logger=logger)
+                                window=args.window, output_dir=args.output_dir, logger=logger)
             else:
                 map_cis_interaction_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
                                 args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
-                                best_only=args.best_only, output_dir=args.output_dir, logger=logger)
+                                window=args.window, best_only=args.best_only, output_dir=args.output_dir, logger=logger)
         elif args.mode=='cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
             res_df = map_cis_independent(pr, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
-                                         fdr=args.fdr, nperm=args.permutations, logger=logger, seed=args.seed)
+                                         fdr=args.fdr, nperm=args.permutations, window=args.window, logger=logger, seed=args.seed)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g', compression='gzip')
