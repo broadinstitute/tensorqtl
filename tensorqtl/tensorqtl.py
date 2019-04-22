@@ -284,7 +284,8 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
     tstat2 = dof * r2_nominal / (1 - r2_nominal)
     slope_se = np.abs(slope) / np.sqrt(tstat2)
 
-    maf = np.sum(g) / (2*len(g))
+    n2 = 2*len(g)
+    maf = np.sum(g) / n2
     if maf <= 0.5:
         ref_factor = 1
         ma_samples = np.sum(g>0.5)
@@ -293,7 +294,7 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
         maf = 1-maf
         ref_factor = -1
         ma_samples = np.sum(g<1.5)
-        ma_count = np.sum(g[g<1.5])
+        ma_count = n2 - np.sum(g[g>0.5])
 
     res_s = pd.Series(OrderedDict([
         ('num_var', num_var),
@@ -710,7 +711,7 @@ def get_significant_pairs(res_df, nominal_prefix, fdr=0.05):
     threshold_dict = df['pval_nominal_threshold'].to_dict()
 
     nominal_files = {os.path.basename(i).split('.')[-2]:i for i in glob.glob(nominal_prefix+'*.parquet')}
-    chroms = sorted(nominal_files.keys())
+    chroms = sorted(nominal_files.keys(), key=lambda x: int(x.replace('chr','').replace('X','100')))
     signif_df = []
     for k,c in enumerate(chroms, 1):
         print('  * parsing significant variant-phenotype pairs for chr. {}/{}'.format(k, len(chroms)), end='\r', flush=True)
@@ -723,7 +724,7 @@ def get_significant_pairs(res_df, nominal_prefix, fdr=0.05):
     signif_df = pd.concat(signif_df, axis=0)
     signif_df = signif_df.merge(df, left_on='phenotype_id', right_index=True)
     print('['+datetime.now().strftime("%b %d %H:%M:%S")+'] done', flush=True)
-    return signif_df
+    return signif_df.reset_index(drop=True)
     # signif_df.to_parquet(nominal_prefix.rsplit('.',1)[0]+'.cis_qtl_significant_pairs.parquet')
 
 
@@ -762,7 +763,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, covariates_t, dof):
 
 
 def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, prefix,
-                    window=1000000, output_dir='.', logger=None):
+                    genotype_df=None, window=1000000, group_s=None, output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -771,6 +772,8 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     """
     if logger is None:
         logger = SimpleLogger()
+    if group_s is not None:
+           group_dict = group_s.to_dict()
 
     logger.write('cis-QTL mapping: nominal associations for all variant-phenotype pairs')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
@@ -784,6 +787,9 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
     phenotype_t = tf.placeholder(dtype=tf.float32, shape=(None))
     dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
 
+    if genotype_df is not None:
+        ix_t = get_sample_indexes(genotype_df.columns.tolist(), phenotype_df.columns)
+
     with tf.Session() as sess:
         # iterate over chromosomes
         start_time = time.time()
@@ -795,9 +801,12 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
             dataset = dataset.prefetch(1)
             iterator = dataset.make_one_shot_iterator()
             next_phenotype, next_genotypes, _, next_id = iterator.get_next()
+            if genotype_df is not None:
+                next_genotypes = tf.gather(next_genotypes, ix_t, axis=1)
             x = calculate_cis_nominal(next_genotypes, next_phenotype, covariates_t, dof)
 
             chr_res_df = []
+            prev_phenotype_id = None
             for i in range(1, igc.n_phenotypes+1):
                 (pval_nominal, slope, slope_se, maf, ma_samples, ma_count), phenotype_id = sess.run([x, next_id])
                 phenotype_id = phenotype_id.decode()
@@ -806,7 +815,7 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
                 nv = len(variant_ids)
                 tss_distance = np.int32(plink_reader.variant_pos[chrom].values[r[0]:r[1]+1] - igc.phenotype_tss[phenotype_id])
 
-                chr_res_df.append(pd.DataFrame(OrderedDict([
+                res_df = pd.DataFrame(OrderedDict([
                     ('phenotype_id', [phenotype_id]*nv),
                     ('variant_id', variant_ids),
                     ('tss_distance', tss_distance),
@@ -816,7 +825,13 @@ def map_cis_nominal(plink_reader, phenotype_df, phenotype_pos_df, covariates_df,
                     ('pval_nominal', pval_nominal),
                     ('slope', slope),
                     ('slope_se', slope_se),
-                ])))
+                ]))
+                if group_s is not None and group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
+                    ix = res_df['pval_nominal'] < chr_res_df[-1]['pval_nominal']
+                    chr_res_df[-1].loc[ix] = res_df.loc[ix]
+                else:
+                    chr_res_df.append(res_df)
+                prev_phenotype_id = phenotype_id
                 print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
             print()
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
