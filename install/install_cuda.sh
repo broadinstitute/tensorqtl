@@ -26,3 +26,7 @@ sudo apt-get update && \
         sudo apt-get install -y nvinfer-runtime-trt-repo-ubuntu1804-5.0.2-ga-cuda10.0 \
         && sudo apt-get update \
         && sudo apt-get install -y --no-install-recommends libnvinfer-dev
+
+# clean up
+rm cuda-repo-ubuntu1804_10.0.130-1_amd64.deb
+rm nvidia-machine-learning-repo-ubuntu1804_1.0.0-1_amd64.deb
