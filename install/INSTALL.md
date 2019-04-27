@@ -1,13 +1,12 @@
 ### Setup CUDA drivers and TensorFlow on GCP
 
-Launch a new instance configured with Ubuntu 16.04 LTS and a GPU, clone this repository, and run the following:
+Launch a new instance configured with Ubuntu 18.04 LTS and a GPU, clone this repository, and run the following:
 #### Install CUDA
 ```bash
 sudo ./install_cuda.sh
 sudo reboot
 # verify
 nvidia-smi
-nvcc --version
 ```
 
 #### Install Python 3
