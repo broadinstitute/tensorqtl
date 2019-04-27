@@ -2,6 +2,7 @@
 from __future__ import print_function
 import pandas as pd
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 import gzip
 import time
@@ -156,7 +157,7 @@ def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0, re
     r2_t = tf.cast(r2_t, tf.float64)
 
     tstat = tf.sqrt(tf.divide(tf.scalar_mul(dof, r2_t), 1 - r2_t), name='tstat')
-    tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
+    tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
 
     if return_sparse:
         pval_t = tf.SparseTensor(ix, tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat))), dims)
@@ -911,7 +912,7 @@ def calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, dof, 
     ix_t = af_t<=0.5
     maf_t = tf.where(ix_t, af_t, 1-af_t)
 
-    tdist = tf.contrib.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
+    tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     if not return_sparse:
         # calculate pval
         pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))  # (ng x 3 x np)

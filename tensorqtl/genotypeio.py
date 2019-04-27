@@ -440,7 +440,7 @@ def parse_tf_vcf_function(example, ix_t=None, key='dosages'):
 
 def make_batched_dataset(tfrecord, batch_size=1, ix_t=None, num_parallel_calls=8):
     dataset = tf.data.TFRecordDataset(tfrecord)
-    dataset = dataset.apply(tf.contrib.data.map_and_batch(
+    dataset = dataset.apply(tf.data.experimental.map_and_batch(
                             map_func=lambda x: parse_tf_vcf_function(x, ix_t=ix_t),
                             batch_size=batch_size,
                             num_parallel_calls=num_parallel_calls))
