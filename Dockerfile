@@ -40,24 +40,19 @@ RUN cd /opt && \
 
 # install R
 ENV DEBIAN_FRONTEND noninteractive
-# RUN echo "deb https://cloud.r-project.org/bin/linux/ubuntu xenial-cran35/" | sudo tee -a /etc/apt/sources.list
-# RUN apt-get update && apt-get install -y --allow-unauthenticated r-base r-base-dev
 RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
 RUN add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran35/'
 RUN apt update && apt install -y r-base r-base-dev
-
 ENV R_LIBS_USER=/opt/R/3.6
 RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite("qvalue");'
-
-# copy tensorQTL
-# COPY . /opt/tensorqtl
-RUN cd /opt && \
-    wget https://github.com/broadinstitute/tensorqtl/archive/9d2bed47e931fb2d4cfe707e2424601b16026621.tar.gz && \
-    tar -xf 9d2bed47e931fb2d4cfe707e2424601b16026621.tar.gz && mv tensorqtl-9d2bed47e931fb2d4cfe707e2424601b16026621 tensorqtl && \
-    rm 9d2bed47e931fb2d4cfe707e2424601b16026621.tar.gz
 
 # python modules
 RUN pip3 install --upgrade pip setuptools
 RUN pip3 install numpy pandas scipy
 RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow tensorflow-gpu tensorflow-probability rpy2
+
+RUN cd /opt && \
+    wget https://github.com/broadinstitute/tensorqtl/archive/868170b6c2a2b16f9308d3555d21a8201be3ca17.tar.gz && \
+    tar -xf 868170b6c2a2b16f9308d3555d21a8201be3ca17.tar.gz && mv tensorqtl-868170b6c2a2b16f9308d3555d21a8201be3ca17 tensorqtl && \
+    rm 868170b6c2a2b16f9308d3555d21a8201be3ca17.tar.gz
 RUN pip3 install -e /opt/tensorqtl/
