@@ -52,9 +52,9 @@ RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite("qvalue")
 # copy tensorQTL
 # COPY . /opt/tensorqtl
 RUN cd /opt && \
-    wget https://github.com/broadinstitute/tensorqtl/archive/862cecd8304f3472055349ffe3f3b540c7c83f97.tar.gz && \
-    tar -xf 862cecd8304f3472055349ffe3f3b540c7c83f97.tar.gz && mv tensorqtl-862cecd8304f3472055349ffe3f3b540c7c83f97 tensorqtl && \
-    rm 862cecd8304f3472055349ffe3f3b540c7c83f97.tar.gz
+    wget https://github.com/broadinstitute/tensorqtl/archive/9d2bed47e931fb2d4cfe707e2424601b16026621.tar.gz && \
+    tar -xf 9d2bed47e931fb2d4cfe707e2424601b16026621.tar.gz && mv tensorqtl-9d2bed47e931fb2d4cfe707e2424601b16026621 tensorqtl && \
+    rm 9d2bed47e931fb2d4cfe707e2424601b16026621.tar.gz
 
 # python modules
 RUN pip3 install --upgrade pip setuptools
