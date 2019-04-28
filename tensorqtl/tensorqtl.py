@@ -1701,7 +1701,7 @@ def main():
         elif args.mode=='cis_nominal':
             if interaction_s is None:
                 map_cis_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
-                                window=args.window, output_dir=args.output_dir, logger=logger)
+                                window=args.window, output_dir=args.output_dir, group_s=group_s, logger=logger)
             else:
                 map_cis_interaction_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
                                 args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
