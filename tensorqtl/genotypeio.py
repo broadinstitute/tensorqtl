@@ -170,7 +170,7 @@ def _impute_mean(g, verbose=False):
         print('    imputed at least 1 sample in {}/{} sites'.format(n, g.shape[0]))
 
 class PlinkReader(object):
-    def __init__(self, plink_prefix_path, select_samples=None, verbose=True, dtype=np.float32):
+    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, verbose=True, dtype=np.float32):
         """
         Class for reading genotypes from PLINK bed files
 
@@ -199,6 +199,12 @@ class PlinkReader(object):
             self.fam = self.fam.loc[ix]
             self.bed = self.bed[:,ix]
             self.sample_ids = self.fam['iid'].tolist()
+        if exclude_variants is not None:
+            m = ~self.bim['snp'].isin(exclude_variants).values
+            self.bed = self.bed[m,:]
+            self.bim = self.bim[m]
+            self.bim.reset_index(drop=True, inplace=True)
+            self.bim['i'] = self.bim.index
         self.n_samples = self.fam.shape[0]
         self.variant_pos = {i:g['pos'] for i,g in self.bim.set_index('snp')[['chrom', 'pos']].groupby('chrom')}
         self.variant_pos_dict = self.bim.set_index('snp')['pos'].to_dict()
