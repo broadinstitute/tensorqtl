@@ -7,4 +7,5 @@ pandas-plink
 pyarrow
 scipy
 tensorflow-gpu
+tensorflow-probability
 rpy2
