@@ -1,11 +1,11 @@
+numpy
+pandas
+scipy
+pandas-plink
 ipython
 jupyter
 matplotlib
-numpy
-pandas
-pandas-plink
 pyarrow
-scipy
 tensorflow-gpu
 tensorflow-probability
 rpy2
