@@ -107,9 +107,9 @@ def center_normalize(M_t, axis=0):
         return tf.divide(N_t, tf.sqrt(tf.reduce_sum(tf.pow(N_t, 2), axis=1, keepdims=True)))
 
 
-def calculate_maf(genotype_t):
+def calculate_maf(genotype_t, alleles=2):
     """Calculate minor allele frequency"""
-    af_t = tf.reduce_sum(genotype_t,1) / (2*tf.cast(tf.shape(genotype_t)[1], tf.float32))
+    af_t = tf.reduce_sum(genotype_t, 1) / (alleles * tf.cast(tf.shape(genotype_t)[1], tf.float32))
     return tf.where(af_t>0.5, 1-af_t, af_t)
 
 
@@ -175,9 +175,9 @@ def calculate_pval(r2_t, dof, maf_t=None, return_sparse=True, r2_threshold=0, re
         return pval_t
 
 
-def calculate_association(genotype_t, phenotype_t, covariates_t, return_sparse=True, r2_threshold=None, return_r2=False):
+def calculate_association(genotype_t, phenotype_t, covariates_t, return_sparse=True, r2_threshold=None, alleles=2, return_r2=False):
     """Calculate genotype-phenotype associations"""
-    maf_t = calculate_maf(genotype_t)
+    maf_t = calculate_maf(genotype_t, alleles=alleles)
     r2_t = tf.pow(_calculate_corr(genotype_t, phenotype_t, covariates_t), 2)
     dof = genotype_t.shape[1].value - 2 - covariates_t.shape[1].value
     return calculate_pval(r2_t, dof, maf_t, return_sparse=return_sparse, r2_threshold=r2_threshold, return_r2=return_r2)
@@ -499,7 +499,7 @@ def map_cis(plink_reader, phenotype_df, phenotype_pos_df, covariates_df, genotyp
     return res_df.astype(output_dtype_dict).infer_objects()
 
 
-def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
+def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df, covariates_df, group_s=None,
                         fdr=0.05, fdr_col='qval', nperm=10000, window=1000000, logger=None, seed=None):
     """
     Run independent cis-QTL mapping (forward-backward regression)
@@ -525,6 +525,10 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
     logger.write('cis-QTL mapping: conditionally independent variants')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
     logger.write('  * {} significant phenotypes'.format(signif_df.shape[0]))
+    if group_s is not None:
+        # logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
+        # group_dict = group_s.to_dict()
+        raise ValueError('Grouped mode not yet implemented.')
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(plink_reader.bed.shape[0]))
 
@@ -589,7 +593,6 @@ def map_cis_independent(plink_reader, summary_df, phenotype_df, phenotype_pos_df
                         break
                 forward_df = pd.concat(forward_df, axis=1).T
                 dosage_df = pd.DataFrame(dosage_dict)
-                # print(forward_df)
 
                 # 2) backward pass
                 if forward_df.shape[0]>1:
@@ -1050,7 +1053,8 @@ def map_cis_interaction_nominal(plink_reader, phenotype_df, phenotype_pos_df, co
 
 def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
               return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05,
-              return_r2=False, batch_size=20000, logger=None, verbose=True):
+              alleles=2, return_r2=False, batch_size=20000,
+              logger=None, verbose=True):
     """Run trans-QTL mapping from genotypes in memory"""
     if logger is None:
         logger = SimpleLogger(verbose=verbose)
@@ -1098,7 +1102,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                                                             batch_size=batch_size, dtype=tf.float32)
         # with tf.device('/gpu:0'):
         x = calculate_association(genotypes, phenotypes, covariates, return_sparse=return_sparse,
-                                  r2_threshold=r2_threshold, return_r2=return_r2)
+                                  r2_threshold=r2_threshold, alleles=alleles, return_r2=return_r2)
 
         init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
