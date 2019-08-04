@@ -1,4 +1,3 @@
-import tensorflow as tf
 import pandas as pd
 import tempfile
 import numpy as np
@@ -56,22 +55,8 @@ class background:
 
 
 #------------------------------------------------------------------------------
-#  Functions for writing VCFs to tfrecord
+#  Functions for writing VCFs
 #------------------------------------------------------------------------------
-def _bytes_feature(values):
-    """Input must be result of v.tobytes() where v is a 1D np.float32 array"""
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[values]))
-
-
-def example_bytes(values):
-    """Input must be float32 np.array"""
-    return tf.train.Example(
-        features=tf.train.Features(
-            feature={'dosages': _bytes_feature(values.tobytes())}
-        )
-    )
-
-
 def _get_vcf_opener(vcfpath):
     if vcfpath.endswith('.vcf.gz'):
         return gzip.open(vcfpath, 'rt')
@@ -103,58 +88,6 @@ def _get_field_ix(line, field):
     if field not in fmt:
         raise ValueError('FORMAT field does not contain {}'.format(field))
     return fmt.index(field)
-
-
-def _write_tfrecord_indices(tfrecord, variant_ids, sample_ids):
-    """Write tfrecord index files with sample and variant IDs"""
-    with open(tfrecord+'.samples', 'w') as f:
-        f.write('\n'.join(sample_ids)+'\n')
-    with gzip.open(tfrecord+'.variants.gz', 'wt', compresslevel=6) as f:
-        f.write('\n'.join(variant_ids)+'\n')
-
-
-def vcf_to_tfrecord(vcfpath, tfrecord, field='GT'):
-    """Convert VCF to tfrecord"""
-
-    variant_ids = []
-    writer = tf.python_io.TFRecordWriter(tfrecord)
-    with _get_vcf_opener(vcfpath) as vcf:
-        for header in vcf:
-            if header[:2]=='##': continue
-            break
-        sample_ids = header.strip().split('\t')[9:]
-
-        # read first line, parse AF
-        line = vcf.readline().strip().split('\t')
-        ix = _get_field_ix(line, field)
-
-        # process 1st variant
-        variant_ids.append(line[2])
-        g = parse_genotypes([i.split(':')[ix] for i in line[9:]], field=field)
-        writer.write(example_bytes(g).SerializeToString())
-        for k,line in enumerate(vcf, 2):
-            line = line.strip().split('\t')
-            variant_ids.append(line[2])
-            g = parse_genotypes([i.split(':')[ix] for i in line[9:]], field=field)
-            writer.write(example_bytes(g).SerializeToString())
-            if np.mod(k,1000)==0:
-                print('\rVariants parsed: {}'.format(k), end='')
-    writer.close()
-
-    _write_tfrecord_indices(tfrecord, variant_ids, sample_ids)
-
-
-def dataframe_to_tfrecord(dosage_df, tfrecord):
-    """Write DataFrame to tfrecord"""
-    writer = tf.python_io.TFRecordWriter(tfrecord)
-    for k,(i,r) in enumerate(dosage_df.iterrows(),1):
-        writer.write(example_bytes(r.values.astype(np.float32)).SerializeToString())
-        if np.mod(k,1000)==0:
-            print('\rProcessed {}/{} variants'.format(k, dosage_df.shape[0]), end='')
-    print('\rProcessed {}/{} variants'.format(k, dosage_df.shape[0]))
-    writer.close()
-
-    _write_tfrecord_indices(tfrecord, dosage_df.index, dosage_df.columns)
 
 #------------------------------------------------------------------------------
 #  Functions for loading regions/variants from VCFs
@@ -320,7 +253,7 @@ def get_vcf_variants(variant_ids, vcfpath, field='GT', sample_ids=None):
 #  Generator classes for batch processing of genotypes/phenotypes
 #------------------------------------------------------------------------------
 class GenotypeGeneratorTrans(object):
-    def __init__(self, genotypes, batch_size=50000, dtype=np.float32):
+    def __init__(self, genotype_df, batch_size=50000, chr_s=None, dtype=np.float32):
         """
         Generator for iterating over all variants (trans-scan)
         
@@ -331,20 +264,41 @@ class GenotypeGeneratorTrans(object):
           dtype:      Batch dtype (default: np.float32).
                       By default genotypes are stored as np.int8.
         """
-        self.genotypes = genotypes
+        self.genotype_df = genotype_df
         self.batch_size = batch_size
-        self.num_batches = int(np.ceil(self.genotypes.shape[0] / batch_size))
-        self.genotype_batch_indexes = [[i*batch_size, (i+1)*batch_size] for i in range(self.num_batches)]
+        self.num_batches = int(np.ceil(self.genotype_df.shape[0] / batch_size))
+        self.batch_indexes = [[i*batch_size, (i+1)*batch_size] for i in range(self.num_batches)]
+        self.batch_indexes[-1][1] = self.genotype_df.shape[0]
         self.dtype = dtype
+        if chr_s is not None:
+            chroms, chr_ix = np.unique(chr_s, return_index=True)
+            s = np.argsort(chr_ix)
+            self.chroms = chroms[s]
+            chr_ix = list(chr_ix[s]) + [chr_s.shape[0]]
+            size_s = pd.Series(np.diff(chr_ix), index=self.chroms)
+            self.chr_batch_indexes = {}
+            for k,c in enumerate(self.chroms):
+                num_batches = int(np.ceil(size_s[c] / batch_size))
+                batch_indexes = [[chr_ix[k]+i*batch_size, chr_ix[k]+(i+1)*batch_size] for i in range(num_batches)]
+                batch_indexes[-1][1] = chr_ix[k+1]
+                self.chr_batch_indexes[c] = batch_indexes
+
+    def __len__(self):
+        return self.num_batches
 
     @background(max_prefetch=6)
-    def generate_data(self):
+    def generate_data(self, chrom=None):
         """Generate batches from genotype data"""
-        for k,i in enumerate(self.genotype_batch_indexes, 1):
-            g = self.genotypes[i[0]:i[1]].astype(self.dtype)
-            if k==self.num_batches:  # pad last batch
-                g = np.r_[g, np.zeros([self.batch_size-g.shape[0], g.shape[1]], dtype=self.dtype)]
-            yield g
+        if chrom is None:
+            for k,i in enumerate(self.batch_indexes, 1):  # loop through batches
+                g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
+                ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
+                yield g, ix
+        else:
+            for k,i in enumerate(self.chr_batch_indexes[chrom], 1):
+                g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
+                ix = self.genotype_df.index[i[0]:i[1]]
+                yield g, ix
 
 
 class InputGeneratorCis(object):
@@ -432,29 +386,3 @@ class InputGeneratorCis(object):
                 p = self.phenotype_values[k]
                 r = self.cis_ranges[phenotype_id]
                 yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
-
-#------------------------------------------------------------------------------
-#  Functions for parsing tfrecords
-#------------------------------------------------------------------------------
-def parse_tf_vcf_function(example, ix_t=None, key='dosages'):
-    parsed_features = tf.parse_single_example(example, {key: tf.FixedLenFeature(shape=[], dtype=tf.string)})
-    parsed_features = tf.decode_raw(parsed_features[key], tf.float32)
-    if ix_t is not None:
-        parsed_features = tf.gather(parsed_features, ix_t, axis=0)
-    return parsed_features
-
-
-def make_batched_dataset(tfrecord, batch_size=1, ix_t=None, num_parallel_calls=8):
-    dataset = tf.data.TFRecordDataset(tfrecord)
-    dataset = dataset.apply(tf.data.experimental.map_and_batch(
-                            map_func=lambda x: parse_tf_vcf_function(x, ix_t=ix_t),
-                            batch_size=batch_size,
-                            num_parallel_calls=num_parallel_calls))
-    dataset = dataset.prefetch(1)
-    return dataset
-
-
-def pad_up_to(t, target_dims, constant_values=0):
-    s = tf.shape(t)
-    paddings = [[0, m-s[i]] for i,m in enumerate(target_dims)]
-    return tf.pad(t, paddings, 'CONSTANT', constant_values=constant_values)
