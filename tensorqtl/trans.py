@@ -59,85 +59,162 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(n_variants))
     if interaction_s is not None:
-        raise NotImplementedError 
         logger.write('  * including interaction term')
-
-    # calculate correlation threshold for sparse output
-    dof = n_samples - 2 - covariates_df.shape[1]
-    if return_sparse:
-        t = stats.t.ppf(pval_threshold/2, dof)**2 / dof
-        r2_threshold = t / (1+t)
-    else:
-        r2_threshold = None
 
     phenotypes_t = torch.tensor(phenotype_df.values, dtype=torch.float32).to(device)
     covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
     residualizer = Residualizer(covariates_t)
     del covariates_t
 
-    ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.float32)
-    start_time = time.time()
-    res = []
-    n_variants = 0
-    for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(), 1):
-        if verbose:
-            sys.stdout.write('\r  * processing batch {}/{}'.format(k, len(ggt)))
-            sys.stdout.flush()
+    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
+    genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
 
-        # copy genotypes to GPU
-        genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-
-        # filter by MAF
-        genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
-        n_variants += genotypes_t.shape[0]
-
-        r2_t = calculate_corr(genotypes_t, phenotypes_t, residualizer).pow(2)
-        del genotypes_t
-
-        maf = maf_t.cpu()
-        if return_sparse:
-            m = r2_t >= r2_threshold
-            r2_t = r2_t.masked_select(m)
-            ix = m.nonzero().cpu()  # sparse index
-            r2_t = r2_t.type(torch.float64)
-            tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
-            if not return_r2:
-                res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]]])
-            else:
-                res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]], r2_t.cpu()])
-        else:
-            tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
-            res.append(tstat)
-    print()
-    logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
-    del phenotypes_t
-    del residualizer
-
-    # post-processing: concatenate batches
-    res = np.concatenate(res)
+    # calculate correlation threshold for sparse output
+    dof = n_samples - 2 - covariates_df.shape[1]
     if return_sparse:
-        res[:,2] = 2*stats.t.cdf(-np.abs(res[:,2].astype(np.float64)), dof)
-        cols = ['variant_id', 'phenotype_id', 'pval', 'maf']
-        if return_r2:
-            cols += ['r2']
-        pval_df = pd.DataFrame(res, columns=cols)
-        pval_df['pval'] = pval_df['pval'].astype(np.float64)
-        pval_df['maf'] = pval_df['maf'].astype(np.float32)
-        if return_r2:
-            pval_df['r2'] = pval_df['r2'].astype(np.float32)
+        tstat_threshold = -stats.t.ppf(pval_threshold/2, dof)
+        r2_threshold = tstat_threshold**2 / (dof + tstat_threshold**2)
     else:
-        pval = 2*stats.t.cdf(-np.abs(res.astype(np.float64)), dof)
-        pval_df = pd.DataFrame(pval, index=variant_ids, columns=phenotype_df.index)
-        pval_df.index.name = 'variant_id'
+        tstat_threshold = None
+        r2_threshold = None
 
-    logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
-    logger.write('done.')
-    return pval_df
+    if interaction_s is None:
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.int8)
+        start_time = time.time()
+        res = []
+        n_variants = 0
+        for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
+            # copy genotypes to GPU
+            genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
+            # TODO: add imputation?
+
+            # filter by MAF
+            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
+            n_variants += genotypes_t.shape[0]
+
+            r2_t = calculate_corr(genotypes_t, phenotypes_t, residualizer).pow(2)
+            del genotypes_t
+
+            maf = maf_t.cpu()
+            if return_sparse:
+                m = r2_t >= r2_threshold
+                r2_t = r2_t.masked_select(m)
+                ix = m.nonzero().cpu()  # sparse index
+                r2_t = r2_t.type(torch.float64)
+                tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
+                if not return_r2:
+                    res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]]])
+                else:
+                    res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]], r2_t.cpu()])
+            else:
+                tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
+                res.append(tstat)
+        logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
+        del phenotypes_t
+        del residualizer
+
+        # post-processing: concatenate batches
+        res = np.concatenate(res)
+        if return_sparse:
+            res[:,2] = 2*stats.t.cdf(-np.abs(res[:,2].astype(np.float64)), dof)
+            cols = ['variant_id', 'phenotype_id', 'pval', 'maf']
+            if return_r2:
+                cols += ['r2']
+            pval_df = pd.DataFrame(res, columns=cols)
+            pval_df['pval'] = pval_df['pval'].astype(np.float64)
+            pval_df['maf'] = pval_df['maf'].astype(np.float32)
+            if return_r2:
+                pval_df['r2'] = pval_df['r2'].astype(np.float32)
+        else:
+            pval = 2*stats.t.cdf(-np.abs(res.astype(np.float64)), dof)
+            pval_df = pd.DataFrame(pval, index=variant_ids, columns=phenotype_df.index)
+            pval_df.index.name = 'variant_id'
+
+        logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+        logger.write('done.')
+        return pval_df
+
+    else:  # interaction model
+        dof = n_samples - 4 - covariates_df.shape[1]
+        interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
+        interaction_mask_t = torch.ByteTensor(interaction_s >= interaction_s.median()).to(device)
+
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.float32)
+        start_time = time.time()
+        if return_sparse:
+            tstat_g_list = []
+            tstat_i_list = []
+            tstat_gi_list = []
+            maf_list = []
+            ix0 = []
+            ix1 = []
+            for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
+                genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
+                res = calculate_interaction_nominal(genotypes_t[:, genotype_ix_t], phenotypes_t, interaction_t, residualizer,
+                                                    interaction_mask_t=interaction_mask_t,
+                                                    maf_threshold_interaction=maf_threshold,
+                                                    return_sparse=return_sparse,
+                                                    tstat_threshold=tstat_threshold)
+                # res: tstat_g, tstat_i, tstat_gi, maf, mask, ix
+                tstat_g, tstat_i, tstat_gi, maf, mask, ix = [i.cpu().numpy() for i in res]
+                # convert sparse indexes
+                if len(ix)>0:
+                    variant_ids = variant_ids[mask.astype(bool)]
+                    tstat_g_list.append(tstat_g)
+                    tstat_i_list.append(tstat_i)
+                    tstat_gi_list.append(tstat_gi)
+                    maf_list.append(maf)
+                    ix0.extend(variant_ids[ix[:,0]].tolist())
+                    ix1.extend(phenotype_df.index[ix[:,1]].tolist())
+
+            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+
+            # concatenate
+            pval_g =  2*stats.t.cdf(-np.abs(np.concatenate(tstat_g_list)), dof)
+            pval_i =  2*stats.t.cdf(-np.abs(np.concatenate(tstat_i_list)), dof)
+            pval_gi = 2*stats.t.cdf(-np.abs(np.concatenate(tstat_gi_list)), dof)
+            maf = np.concatenate(maf_list)
+
+            pval_df = pd.DataFrame(np.c_[ix0, ix1, pval_g, pval_i, pval_gi, maf], 
+                                   columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'maf']
+                                   ).astype({'pval_g':np.float64, 'pval_i':np.float64, 'pval_gi':np.float64, 'maf':np.float32})
+            return pval_df
+        else:  # dense output
+            output_list = []
+            for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
+                genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
+                res = calculate_interaction_nominal(genotypes_t[:, genotype_ix_t], phenotypes_t, interaction_t, residualizer,
+                                                    interaction_mask_t=interaction_mask_t,
+                                                    maf_threshold_interaction=maf_threshold,
+                                                    return_sparse=return_sparse)
+                # res: tstat, b, b_se, maf, ma_samples, ma_count, mask
+                res = [i.cpu().numpy() for i in res]
+                res[-1] = variant_ids[res[-1].astype(bool)]
+                output_list.append(res)
+            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+
+            # concatenate outputs
+            tstat = np.concatenate([i[0] for i in output_list])
+            pval = 2*stats.t.cdf(-np.abs(tstat), dof)
+            b = np.concatenate([i[1] for i in output_list])
+            b_se = np.concatenate([i[2] for i in output_list])
+            maf = np.concatenate([i[3] for i in output_list])
+            ma_samples = np.concatenate([i[4] for i in output_list])
+            ma_count = np.concatenate([i[5] for i in output_list])
+            variant_ids = np.concatenate([i[6] for i in output_list])
+
+            pval_g_df = pd.DataFrame(pval[:,0,:], index=variant_ids, columns=phenotype_df.index)
+            pval_i_df = pd.DataFrame(pval[:,1,:], index=variant_ids, columns=phenotype_df.index)
+            pval_gi_df = pd.DataFrame(pval[:,2,:], index=variant_ids, columns=phenotype_df.index)
+            maf_s = pd.Series(maf, index=variant_ids, name='maf').astype(np.float32)
+            ma_samples_s = pd.Series(ma_samples, index=variant_ids, name='maf').astype(np.int32)
+            ma_count_s = pd.Series(ma_count, index=variant_ids, name='maf').astype(np.int32)
+            return pval_g_df, pval_i_df, pval_gi_df, maf_s, ma_samples_s, ma_count_s
 
 
 def map_permutations(genotype_df, covariates_df, permutations=None,
                      chr_s=None, nperms=10000, maf_threshold=0.05,
-                     batch_size=20000, logger=None, seed=None):
+                     batch_size=20000, logger=None, seed=None, verbose=True):
     """
 
 
@@ -153,8 +230,10 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
     sample_ids = covariates_df.index.values
 
     variant_ids = genotype_df.index.tolist()
+
     # index of VCF samples corresponding to phenotypes
-    # ix_t = get_sample_indexes(genotype_df.columns.tolist(), sample_ids)  # TODO
+    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in sample_ids])
+    genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
 
     n_variants = len(variant_ids)
     n_samples = len(sample_ids)
@@ -193,19 +272,15 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         k = 0
         for chrom in ggt.chroms:
             max_r2_t = torch.FloatTensor(nperms).fill_(0).to(device)
-            for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(chrom=chrom), k+1):
-                sys.stdout.write('\r  * processing batch {}/{}'.format(k, total_batches))
-                sys.stdout.flush()
-
+            for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(chrom=chrom, verbose=verbose), k+1):
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-                genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
+                genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
                 n_variants += genotypes_t.shape[0]
                 r2_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)
                 del genotypes_t
                 m,_ = r2_t.max(0)
                 max_r2_t = torch.max(m, max_r2_t)
             chr_max_r2[chrom] = max_r2_t.cpu()
-        print()
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
         chr_max_r2 = pd.DataFrame(chr_max_r2)
 
@@ -240,18 +315,14 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         start_time = time.time()
         max_r2_t = torch.FloatTensor(nperms).fill_(0).to(device)
         n_variants = 0
-        for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(), 1):
-            sys.stdout.write('\r  * processing batch {}/{}'.format(k, len(ggt)))
-            sys.stdout.flush()
-
+        for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
+            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
             r2_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)
             del genotypes_t
             m,_ = r2_t.max(0)
             max_r2_t = torch.max(m, max_r2_t)
-        print()
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
         max_r2 = max_r2_t.cpu()
         tstat = np.sqrt( dof*max_r2 / (1-max_r2) )
@@ -261,3 +332,28 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         beta_s = pd.Series([n_samples, dof, beta_shape1, beta_shape2, true_dof, minp_vec, minp_empirical],
             index=['num_samples', 'df', 'beta_shape1', 'beta_shape2', 'true_df', 'minp_true_df', 'minp_empirical'])
         return beta_s
+
+
+def apply_permutations(res, pairs_df):
+    """
+      res: output from map_permutations()
+      pairs_df: output from map_trans()
+    """
+
+    if isinstance(res, pd.Series):  # chrs not split
+        nperms = len(res['minp_true_df'])
+        for k in ['beta_shape1', 'beta_shape2', 'true_df']:
+            pairs_df[k] = res[k]
+        pairs_df['pval_true_dof'] = pval_from_corr(pairs_df['r2'], pairs_df['true_df'])
+        pairs_df['pval_perm'] = np.array([(np.sum(res['minp_empirical']<=p)+1)/(nperms+1) for p in pairs_df['pval']])
+        pairs_df['pval_beta'] = stats.beta.cdf(pairs_df['pval_true_dof'], pairs_df['beta_shape1'], pairs_df['beta_shape2'])
+
+    elif isinstance(res, pd.DataFrame):  #  chrs split
+        nperms = len(res['minp_empirical'][0])
+        for k in ['beta_shape1', 'beta_shape2', 'true_df']:
+            pairs_df[k] = res.loc[pairs_df['phenotype_chr'], k].values
+        pairs_df['pval_true_df'] = pval_from_corr(pairs_df['r2'], pairs_df['true_df'])
+        pairs_df['pval_perm'] = [(np.sum(pe<=p)+1)/(nperms+1) for p,pe in zip(pairs_df['pval'], res.loc[pairs_df['phenotype_chr'], 'minp_empirical'])]
+        # pval_perm = np.array([(np.sum(minp_empirical[chrom]<=p)+1)/(nperms+1) for p, chrom in zip(pval_df['pval'], pval_df['phenotype_chr'])])
+        # pval_perm = np.array([(np.sum(minp_empirical<=p)+1)/(nperms+1) for p in minp_nominal])
+        pairs_df['pval_beta'] = stats.beta.cdf(pairs_df['pval_true_df'], pairs_df['beta_shape1'], pairs_df['beta_shape2'])

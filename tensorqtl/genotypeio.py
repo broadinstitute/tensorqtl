@@ -19,6 +19,14 @@ def _check_dependency(name):
         raise RuntimeError('External dependency \''+name+'\' not installed')
 
 
+def _print_progress(k, n):
+    s = '\r  * processing batch {}/{}'.format(k, n)
+    if k == n:
+        s += '\n'
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+
 class BackgroundGenerator(threading.Thread):
     # Adapted from https://github.com/justheuristic/prefetch_generator
     def __init__(self, generator, max_prefetch=10):
@@ -256,13 +264,15 @@ class GenotypeGeneratorTrans(object):
     def __init__(self, genotype_df, batch_size=50000, chr_s=None, dtype=np.float32):
         """
         Generator for iterating over all variants (trans-scan)
-        
+
         Inputs:
           genotypes:  Numpy array of genotypes (variants x samples)
                       (see PlinkReader.get_all_genotypes())
           batch_size: Batch size for GPU processing
           dtype:      Batch dtype (default: np.float32).
                       By default genotypes are stored as np.int8.
+
+        Generates: genotype array (2D), variant ID array
         """
         self.genotype_df = genotype_df
         self.batch_size = batch_size
@@ -287,15 +297,19 @@ class GenotypeGeneratorTrans(object):
         return self.num_batches
 
     @background(max_prefetch=6)
-    def generate_data(self, chrom=None):
+    def generate_data(self, chrom=None, verbose=False):
         """Generate batches from genotype data"""
         if chrom is None:
             for k,i in enumerate(self.batch_indexes, 1):  # loop through batches
+                if verbose:
+                    _print_progress(k, self.num_batches)
                 g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
                 ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
                 yield g, ix
         else:
             for k,i in enumerate(self.chr_batch_indexes[chrom], 1):
+                if verbose:
+                    _print_progress(k, self.num_batches)
                 g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
                 ix = self.genotype_df.index[i[0]:i[1]]
                 yield g, ix
