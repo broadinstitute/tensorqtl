@@ -77,6 +77,16 @@ def filter_maf(genotypes_t, variant_ids, maf_threshold):
     return genotypes_t, variant_ids, maf_t
 
 
+def impute_mean(genotypes_t):
+    """Impute missing genotypes to mean"""
+    m = genotypes_t == -1
+    a = genotypes_t.sum(1)
+    b = m.sum(1).float()
+    mu = (a + b) / (genotypes_t.shape[1] - b)
+    ix = m.nonzero()
+    genotypes_t[m] = mu[ix[:,0]]
+
+
 def center_normalize(M_t, dim=0):
     """Center and normalize M"""
     N_t = M_t - M_t.mean(dim=dim, keepdim=True)
@@ -153,7 +163,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     if nps==1:
         r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
         rss_t = (r_t*r_t).sum(1)
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8)] * rss_t.unsqueeze(1) / dof)
+        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()] * rss_t.unsqueeze(1) / dof)
         b_t = b_t.squeeze(2)
         # r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
         # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)

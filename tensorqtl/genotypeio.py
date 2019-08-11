@@ -111,7 +111,7 @@ def _impute_mean(g, verbose=False):
         print('    imputed at least 1 sample in {}/{} sites'.format(n, g.shape[0]))
 
 class PlinkReader(object):
-    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, verbose=True, dtype=np.float32):
+    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.float32):
         """
         Class for reading genotypes from PLINK bed files
 
@@ -146,7 +146,14 @@ class PlinkReader(object):
             self.bim = self.bim[m]
             self.bim.reset_index(drop=True, inplace=True)
             self.bim['i'] = self.bim.index
+        if exclude_chrs is not None:
+            m = ~self.bim['chrom'].isin(exclude_chrs).values
+            self.bed = self.bed[m,:]
+            self.bim = self.bim[m]
+            self.bim.reset_index(drop=True, inplace=True)
+            self.bim['i'] = self.bim.index
         self.n_samples = self.fam.shape[0]
+        self.chrs = self.bim['chrom'].unique().tolist()
         self.variant_pos = {i:g['pos'] for i,g in self.bim.set_index('snp')[['chrom', 'pos']].groupby('chrom')}
         self.variant_pos_dict = self.bim.set_index('snp')['pos'].to_dict()
 
@@ -300,19 +307,16 @@ class GenotypeGeneratorTrans(object):
     def generate_data(self, chrom=None, verbose=False):
         """Generate batches from genotype data"""
         if chrom is None:
-            for k,i in enumerate(self.batch_indexes, 1):  # loop through batches
-                if verbose:
-                    _print_progress(k, self.num_batches)
-                g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
-                ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
-                yield g, ix
+            batch_indexes = self.batch_indexes
         else:
-            for k,i in enumerate(self.chr_batch_indexes[chrom], 1):
-                if verbose:
-                    _print_progress(k, self.num_batches)
-                g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
-                ix = self.genotype_df.index[i[0]:i[1]]
-                yield g, ix
+            batch_indexes = self.chr_batch_indexes[chrom]
+
+        for k,i in enumerate(batch_indexes, 1):  # loop through batches
+            if verbose:
+                _print_progress(k, self.num_batches)
+            g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
+            ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
+            yield g, ix
 
 
 class InputGeneratorCis(object):
@@ -327,10 +331,12 @@ class InputGeneratorCis(object):
 
     Generates: phenotype array, genotype array (2D), cis-window indices, phenotype ID
     """
-    def __init__(self, plink_reader, phenotype_df, phenotype_pos_df, genotype_df=None, window=1000000):
+    def __init__(self, genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=1000000):
+        assert (genotype_df.index==variant_df.index).all()
         assert (phenotype_df.index==phenotype_df.index.unique()).all()
-        self.plink_reader = plink_reader
         self.genotype_df = genotype_df
+        self.variant_df = variant_df.copy()
+        self.variant_df['index'] = np.arange(variant_df.shape[0])
         self.n_samples = phenotype_df.shape[1]
         self.phenotype_df = phenotype_df
         self.phenotype_pos_df = phenotype_pos_df
@@ -339,64 +345,60 @@ class InputGeneratorCis(object):
         self.n_phenotypes = phenotype_df.shape[0]
         self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
         self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
-
-        num_var_chr = self.plink_reader.bim['chrom'].value_counts().to_dict()
-        # indices of variants for each chromosome
-        var_index_chr = {c:np.arange(num_var_chr[c]) for c in num_var_chr}
+        self.chrs = variant_df['chrom'].unique()
+        self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
 
         # check phenotypes & calculate genotype ranges
+        # get genotype indexes corresponding to cis-window of each phenotype
         valid_ix = []
         self.cis_ranges = {}
-
-        chr_size_s = plink_reader.bim['chrom'].value_counts()[plink_reader.bim['chrom'].unique()]
-        if genotype_df is not None:
-            chr_offset_s = pd.Series([0]+chr_size_s.iloc[:-1].tolist(), index=chr_size_s.index).cumsum()
-        else:
-            chr_offset_s = pd.Series(0, index=chr_size_s.index)
-
         for k,phenotype_id in enumerate(phenotype_df.index,1):
-            if np.mod(k,1000)==0:
+            if np.mod(k, 1000) == 0:
                 print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]), end='')
-            # find indices corresponding to cis-window of each gene
+
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
-            r = var_index_chr[chrom][
-                (plink_reader.variant_pos[chrom].values>=tss-self.window) &
-                (plink_reader.variant_pos[chrom].values<=tss+self.window)
-            ] + chr_offset_s[chrom]  # offset is 0 if loading by chr
-            if len(r)>0:
+            # r = self.chr_variant_dfs[chrom]['index'].values[
+            #     (self.chr_variant_dfs[chrom]['pos'].values >= tss - self.window) &
+            #     (self.chr_variant_dfs[chrom]['pos'].values <= tss + self.window)
+            # ]
+            # r = [r[0],r[-1]]
+
+            m = len(self.chr_variant_dfs[chrom]['pos'].values)
+            lb = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
+            ub = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window, side='right')
+            if not ((lb == 0 and ub == 0) or (lb == m and ub == m)):
+                r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
+            else:
+                r = []
+
+            if len(r) > 0:
                 valid_ix.append(phenotype_id)
-                self.cis_ranges[phenotype_id] = [r[0],r[-1]]
+                self.cis_ranges[phenotype_id] = r
         print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]))
         if len(valid_ix)!=phenotype_df.shape[0]:
             print('    ** dropping {} phenotypes without variants in cis-window'.format(
-                phenotype_df.shape[0]-len(valid_ix)))
+                  phenotype_df.shape[0]-len(valid_ix)))
             self.phenotype_df = self.phenotype_df.loc[valid_ix]
             self.n_phenotypes = self.phenotype_df.shape[0]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
             self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
             self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
-        self.phenotype_values = self.phenotype_df.values
-        self.loaded_chrom = ''
 
     @background(max_prefetch=6)
-    def generate_data(self):
-        if self.genotype_df is None:
-            for k,phenotype_id in enumerate(self.phenotype_df.index):
-                chrom = self.phenotype_chr[phenotype_id]
-                if chrom != self.loaded_chrom:
-                    # load genotypes into memory
-                    print('  * loading genotypes')
-                    self.chr_genotypes, self.chr_variant_pos = self.plink_reader.get_region(chrom, verbose=True)
-                    self.loaded_chrom = chrom
-
-                # return phenotype & its permutations in same array; fetch genotypes
-                p = self.phenotype_values[k]
-                r = self.cis_ranges[phenotype_id]
-                yield p, self.chr_genotypes[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
+    def generate_data(self, chrom=None):
+        """
+        
+        Returns: phenotype array, genotype matrix, genotype index, phenotype ID
+        """
+        if chrom is None:
+            phenotype_ids = self.phenotype_df.index
         else:
-            for k,phenotype_id in enumerate(self.phenotype_df.index):
-                # return phenotype & its permutations in same array; fetch genotypes
-                p = self.phenotype_values[k]
-                r = self.cis_ranges[phenotype_id]
-                yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
+            phenotype_ids = self.phenotype_pos_df[self.phenotype_pos_df['chr']==chrom].index
+
+        for k,phenotype_id in enumerate(phenotype_ids):
+            # if verbose:
+            #     _print_progress(k, self.num_batches)
+            p = self.phenotype_df.values[k]
+            r = self.cis_ranges[phenotype_id]
+            yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
