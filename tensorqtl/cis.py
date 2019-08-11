@@ -9,6 +9,11 @@ from collections import OrderedDict
 
 sys.path.insert(1, os.path.dirname(__file__))
 import genotypeio
+
+import imp
+import core
+imp.reload(core)
+
 from core import *
 
 
@@ -123,16 +128,16 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             print('\r    computing associations for phenotype {}/{}'.format(k, igc.n_phenotypes), end='')
         print()
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-        print('  * writing output')
         chr_res_df = pd.concat(chr_res_df, copy=False)
         chr_res_df['pval_nominal'] = 2*stats.t.cdf(-chr_res_df['pval_nominal'].abs(), dof)
+        print('  * writing output')
         chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
     logger.write('done.')
 
 
 def map_nominal_interaction(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
-                                prefix, maf_threshold_interaction=0.05, best_only=False, group_s=None,
-                                window=1000000, output_dir='.', logger=None):
+                            prefix, maf_threshold_interaction=0.05, best_only=False, group_s=None,
+                            window=1000000, output_dir='.', logger=None):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -165,7 +170,7 @@ def map_nominal_interaction(genotype_df, variant_df, phenotype_df, phenotype_pos
     dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
     interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
     if maf_threshold_interaction>0:
-        interaction_mask_t = torch.ByteTensor(interaction_s >= interaction_s.median()).to(device)
+        interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
     else:
         interaction_mask_t = None
 
@@ -174,23 +179,22 @@ def map_nominal_interaction(genotype_df, variant_df, phenotype_df, phenotype_pos
     start_time = time.time()
     best_assoc = []
     prev_phenotype_id = None
+    k = 0
     for chrom in igc.chrs:
         logger.write('  Mapping chromosome {}'.format(chrom))
         chr_res_df = []
-        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom), 1):
+        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom), k+1):
             # copy genotypes to GPU
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device).unsqueeze(0)
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
 
+
             res = calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, residualizer,
                                                 interaction_mask_t=interaction_mask_t,
                                                 maf_threshold_interaction=maf_threshold_interaction,
                                                 return_sparse=False)
-            # res: tstat, b, b_se, maf, ma_samples, ma_count, mask
-            res = [i.cpu().numpy() for i in res]
-            # res[-1] = variant_ids[res[-1].astype(bool)]
             tstat, b, b_se, maf, ma_samples, ma_count, mask = [i.cpu().numpy() for i in res]
             if len(tstat)>0:
                 r = igc.cis_ranges[phenotype_id]
@@ -217,7 +221,7 @@ def map_nominal_interaction(genotype_df, variant_df, phenotype_df, phenotype_pos
                     ('b_gi', b[:,2]),
                     ('b_gi_se', b_se[:,2]),
                 ]))
-                best_assoc.append(df.loc[df['pval_gi'].idxmin()])
+                best_assoc.append(df.loc[df['pval_gi'].idxmin()])  # top variant only
 
 
                 if group_s is not None and group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
@@ -226,20 +230,25 @@ def map_nominal_interaction(genotype_df, variant_df, phenotype_df, phenotype_pos
                 else:
                     chr_res_df.append(df)
                 prev_phenotype_id = phenotype_id
-                print('\r    computing associations for phenotype {}/{}'.format(i, igc.n_phenotypes), end='')
-            print()
-            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+            print('\r    computing associations for phenotype {}/{}'.format(k, igc.n_phenotypes), end='')
+        print()
+        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
-            if not best_only:
-                print('  * writing output')
-                chr_res_df = pd.concat(chr_res_df, copy=False)
-                chr_res_df['pval_g'] = 2*stats.t.cdf(-chr_res_df['pval_g'].abs(), dof)
-                chr_res_df['pval_i'] = 2*stats.t.cdf(-chr_res_df['pval_i'].abs(), dof)
-                chr_res_df['pval_gi'] = 2*stats.t.cdf(-chr_res_df['pval_gi'].abs(), dof)
-                pd.concat(chr_res_df, copy=False).to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairsX.{}.parquet'.format(prefix, chrom)))
+        if not best_only:
+            chr_res_df = pd.concat(chr_res_df, copy=False)
+            chr_res_df['pval_g'] = 2*stats.t.cdf(-chr_res_df['pval_g'].abs(), dof)
+            chr_res_df['pval_i'] = 2*stats.t.cdf(-chr_res_df['pval_i'].abs(), dof)
+            chr_res_df['pval_gi'] = 2*stats.t.cdf(-chr_res_df['pval_gi'].abs(), dof)
+            print('  * writing output')
+            chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairsX.{}.parquet'.format(prefix, chrom)))
 
     best_assoc = pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects()
-    # TODO: compute pval
+    best_assoc['pval_g'] = 2*stats.t.cdf(-best_assoc['pval_g'].abs(), dof)
+    best_assoc['pval_i'] = 2*stats.t.cdf(-best_assoc['pval_i'].abs(), dof)
+    best_assoc['pval_gi'] = 2*stats.t.cdf(-best_assoc['pval_gi'].abs(), dof)
     best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
                       sep='\t', float_format='%.6g')
     logger.write('done.')
+
+
+

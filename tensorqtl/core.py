@@ -130,7 +130,6 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         mask_t = mask_t & upper_t & lower_t
 
     genotypes_t = genotypes_t[mask_t]
-
     ng, ns = genotypes_t.shape
     nps = phenotypes_t.shape[0]
 
@@ -174,10 +173,11 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         # convert to ng x np x 3??
         r_t = torch.matmul(X_t, b_t) - torch.transpose(p0_tile_t, 1, 2)  # (ng x ns x np)
         rss_t = (r_t*r_t).sum(1)  # ng x np
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8)].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
+        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
         # r_t = tf.matmul(X_t, b_t) - tf.transpose(p0_tile_t, [0,2,1])  # (ng x ns x np)
         # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)  # ng x np
         # b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
+
 
     # tstat_t = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))  # (ng x 3 x np)
     # weird tf bug? without cast/copy, divide appears to modify b_se_t??
@@ -195,10 +195,10 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
 
         # calculate MA samples and counts
         m = genotypes_t > 0.5
-        a = m.sum(1)
-        b = (genotypes_t < 1.5).sum(1)
+        a = m.sum(1).int()
+        b = (genotypes_t < 1.5).sum(1).int()
         ma_samples_t = torch.where(ix_t, a, b)
-        a = (genotypes_t * m.float()).sum(1)
+        a = (genotypes_t * m.float()).sum(1).int()
         ma_count_t = torch.where(ix_t, a, n2-a)
         return tstat_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t, mask_t
 
