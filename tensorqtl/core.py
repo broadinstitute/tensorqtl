@@ -178,10 +178,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)  # ng x np
         # b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
 
-
-    # tstat_t = tf.divide(tf.cast(b_t, tf.float64), tf.cast(b_se_t, tf.float64))  # (ng x 3 x np)
-    # weird tf bug? without cast/copy, divide appears to modify b_se_t??
-    tstat_t = b_t / b_se_t
+    tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x 3 x np)
 
     # calculate MAF
     n2 = 2*ns
