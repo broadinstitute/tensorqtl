@@ -304,16 +304,18 @@ class GenotypeGeneratorTrans(object):
         return self.num_batches
 
     @background(max_prefetch=6)
-    def generate_data(self, chrom=None, verbose=False):
+    def generate_data(self, chrom=None, verbose=False, enum_start=1):
         """Generate batches from genotype data"""
         if chrom is None:
             batch_indexes = self.batch_indexes
+            num_batches = self.num_batches
         else:
             batch_indexes = self.chr_batch_indexes[chrom]
+            num_batches = np.sum([len(i) for i in self.chr_batch_indexes.values()])
 
-        for k,i in enumerate(batch_indexes, 1):  # loop through batches
+        for k,i in enumerate(batch_indexes, enum_start):  # loop through batches
             if verbose:
-                _print_progress(k, self.num_batches)
+                _print_progress(k, num_batches)
             g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
             ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
             yield g, ix

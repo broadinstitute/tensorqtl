@@ -107,6 +107,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                 else:
                     res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]], r2_t.cpu()])
             else:
+                r2_t = r2_t.type(torch.float64)
                 tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
                 res.append(tstat)
         logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
@@ -272,7 +273,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         k = 0
         for chrom in ggt.chroms:
             max_r2_t = torch.FloatTensor(nperms).fill_(0).to(device)
-            for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(chrom=chrom, verbose=verbose), k+1):
+            for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(chrom=chrom, verbose=verbose, enum_start=k+1), k+1):
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
                 genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
                 n_variants += genotypes_t.shape[0]
