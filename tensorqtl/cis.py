@@ -9,11 +9,6 @@ from collections import OrderedDict
 
 sys.path.insert(1, os.path.dirname(__file__))
 import genotypeio
-
-import imp
-import core
-imp.reload(core)
-
 from core import *
 
 
@@ -28,12 +23,12 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
     p = phenotype_t.reshape(1,-1)
     r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, p, residualizer, return_sd=True)
     r_nominal_t = r_nominal_t.squeeze()
-    r2_nominal_t = r_nominal_t.pow(2)
+    r2_nominal_t = r_nominal_t.double().pow(2)
 
     dof = residualizer.dof
     slope_t = r_nominal_t * std_ratio_t
     tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
-    slope_se_t = slope_t.abs() / tstat_t
+    slope_se_t = slope_t.abs().double() / tstat_t
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
 
@@ -68,7 +63,7 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
                 interaction_s=None, maf_threshold_interaction=0.05,
-                group_s=None, window=1000000, output_dir='.', logger=None):
+                group_s=None, window=1000000, output_dir='.', logger=None, verbose=True):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -114,10 +109,11 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
     start_time = time.time()
     prev_phenotype_id = None
     k = 0
+    logger.write('  * Computing associations')
     for chrom in igc.chrs:
-        logger.write('  Mapping chromosome {}'.format(chrom))
+        logger.write('    Mapping chromosome {}'.format(chrom))
         chr_res_df = []
-        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom), k+1):
+        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom, verbose=verbose), k+1):
             # copy genotypes to GPU
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
@@ -186,9 +182,6 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             else:
                 chr_res_df.append(res_df)
             prev_phenotype_id = phenotype_id
-
-            print('\r    computing associations for phenotype {}/{}'.format(k, igc.n_phenotypes), end='')
-        print()
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
         # compute p-values and write current chromosome
@@ -253,7 +246,7 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
     return res_s
 
 
-def _process_group_permutations(buf):
+def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000):
     """
     Merge results for grouped phenotypes
 
@@ -265,11 +258,19 @@ def _process_group_permutations(buf):
     g, num_var, phenotype_id = buf[max_ix][4:]
     # select best phenotype correlation for each permutation
     r2_perm = np.max([b[3] for b in buf], 0)
-    return r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id
+    # return r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id
+    variant_id = variant_df.index[var_ix]
+    tss_distance = variant_df['pos'].values[var_ix] - tss
+    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+    res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+    res_s['group_id'] = group_id
+    res_s['group_size'] = len(buf)
+    return res_s
 
 
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
-            group_s=None, beta_approx=True, nperm=10000, window=1000000, logger=None, seed=None):
+            group_s=None, beta_approx=True, nperm=10000,
+            window=1000000, logger=None, seed=None, verbose=True):
     """Run cis-QTL mapping"""
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -305,13 +306,14 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     res_df = []
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=window)
     start_time = time.time()
+    logger.write('  * computing permutations')
     if group_s is None:
-        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(), 1):
+        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
             # copy genotypes to GPU
-            phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
+            phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
 
             res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
@@ -322,51 +324,23 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             if beta_approx:
                 res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
             res_df.append(res_s)
-            print('\r  * computing permutations for phenotype {}/{}'.format(k, igc.n_phenotypes), end='')
-        print()
     else:
-        n_groups = len(igc.phenotype_df.index.map(group_dict).unique())
-        buf = []
-        processed_groups = 0
-        previous_group = None
-        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(), 1):
+        for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(group_s=group_s, verbose=verbose), 1):
             # copy genotypes to GPU
-            phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
 
-            group_id = group_dict[phenotype_id]
-            res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
-            res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
-            res[2] = genotype_range[var_ix]
-            if (group_id != previous_group and len(buf)>0):  # new group, process previous
-                r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id = _process_group_permutations(buf)
-                variant_id = variant_df.index[var_ix]
-                tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_tss[phenotype_id]
-                res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
-                res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
-                res_s['group_id'] = group_id
-                res_s['group_size'] = len(buf)
-                res_df.append(res_s)
-                processed_groups += 1
-                print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='')
-                # reset
-                buf = [ires]
-            else:
+            # iterate over phenotypes
+            buf = []
+            for phenotype in phenotypes:
+                phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
+                res[2] = genotype_range[var_ix]
                 buf.append(res + [genotypes.shape[0], phenotype_id])
-            previous_group = group_id
-        # process last group
-        r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id = _process_group_permutations(buf)
-        variant_id = variant_df.index[var_ix]
-        tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_tss[phenotype_id]
-        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
-        res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
-        res_s['group_id'] = group_id
-        res_s['group_size'] = len(buf)
-        res_df.append(res_s)
-        processed_groups += 1
-        print('\r  * computing permutations for phenotype group {}/{}'.format(processed_groups, n_groups), end='\n')
+            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
+            res_df.append(res_s)
 
     res_df = pd.concat(res_df, axis=1).T
     res_df.index.name = 'phenotype_id'
@@ -376,13 +350,13 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
 
 def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos_df, covariates_df,
-                    group_s=None, fdr=0.05, fdr_col='qval', nperm=10000, window=1000000, logger=None, seed=None):
+                    group_s=None, fdr=0.05, fdr_col='qval', nperm=10000, 
+                    window=1000000, logger=None, seed=None, verbose=True):
     """
     Run independent cis-QTL mapping (forward-backward regression)
 
     cis_df: output from map_cis, annotated with q-values (calculate_qvalues)
     """
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     assert np.all(phenotype_df.index==phenotype_pos_df.index)
@@ -390,11 +364,14 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
         logger = SimpleLogger()
 
     signif_df = cis_df[cis_df[fdr_col]<=fdr].copy()
-    signif_df = signif_df[[
+    cols = [
         'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df',
         'variant_id', 'tss_distance', 'ma_samples', 'ma_count', 'maf', 'ref_factor',
         'pval_nominal', 'slope', 'slope_se', 'pval_perm', 'pval_beta',
-    ]]
+    ]
+    if group_s is not None:
+        cols += ['group_id', 'group_size']
+    signif_df = signif_df[cols]
     signif_threshold = signif_df['pval_beta'].max()
     # subset significant phenotypes
     ix = signif_df.index[signif_df.index.isin(phenotype_df.index)]
@@ -405,17 +382,11 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
     logger.write('  * {} significant phenotypes'.format(signif_df.shape[0]))
     if group_s is not None:
-        # logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
-        # group_dict = group_s.to_dict()
-        raise ValueError('Grouped mode not yet implemented.')
+        logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
+        group_dict = group_s.to_dict()
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(genotype_df.shape[0]))
-
     # print('Significance threshold: {}'.format(signif_threshold))
-
-    # covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
-    # residualizer = Residualizer(covariates_t)
-    # del covariates_t
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
@@ -431,9 +402,10 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
     res_df = []
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=window)
+    logger.write('  * computing independent QTLs')
     start_time = time.time()
     if group_s is None:
-        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(), 1):
+        for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
             # copy genotypes to GPU
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device).unsqueeze(0)
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
@@ -457,9 +429,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
                 res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
                 r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
-
                 x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
-                # add to list if significant
+                # add to list if empirical p-value passes significance threshold
                 if x[0] <= signif_threshold:
                     var_ix = genotype_range[var_ix]
                     variant_id = variant_df.index[var_ix]
@@ -503,8 +474,81 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
             else:  # single independent variant
                 forward_df['rank'] = 1
                 res_df.append(forward_df)
-            print('\r  * computing independent QTL for phenotype {}/{}'.format(j, igc.n_phenotypes), end='')
-        print()
+
+    else:  # grouped phenotypes
+        for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(group_s=group_s, verbose=verbose), 1):
+            # copy genotypes to GPU
+            genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
+            genotypes_t = genotypes_t[:,genotype_ix_t]
+            impute_mean(genotypes_t)
+
+            # 1) forward pass
+            forward_df = [signif_df.loc[phenotype_id]]  # initialize results with top variant
+            covariates = covariates_df.values.copy()  # initialize covariates
+            dosage_dict = {}
+            while True:
+                # add variant to covariates
+                variant_id = forward_df[-1]['variant_id']
+                ig = genotype_df.values[ix_dict[variant_id], genotype_ix]
+                dosage_dict[variant_id] = ig
+                covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
+                dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
+                covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
+                residualizer = Residualizer(covariates_t)
+                del covariates_t
+
+                # iterate over phenotypes
+                buf = []
+                for phenotype in phenotypes:
+                    phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                    res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
+                    res[2] = genotype_range[var_ix]
+                    buf.append(res + [genotypes.shape[0], phenotype_id])
+                res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
+
+                # add to list if significant
+                if res_s['pval_beta'] <= signif_threshold:
+                    forward_df.append(res_s)
+                else:
+                    break
+            forward_df = pd.concat(forward_df, axis=1).T
+            dosage_df = pd.DataFrame(dosage_dict)
+
+            # 2) backward pass
+            if forward_df.shape[0]>1:
+                back_df = []
+                variant_set = set()
+                for k,i in enumerate(forward_df['variant_id'], 1):
+                    covariates = np.hstack([
+                        covariates_df.values,
+                        dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values,
+                    ])
+                    dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
+                    covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
+                    residualizer = Residualizer(covariates_t)
+                    del covariates_t
+
+                    # iterate over phenotypes
+                    buf = []
+                    for phenotype in phenotypes:
+                        phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
+                        res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                        res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
+                        res[2] = genotype_range[var_ix]
+                        buf.append(res + [genotypes.shape[0], phenotype_id])
+                    res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
+
+                    if res_s['pval_beta'] <= signif_threshold and variant_id not in variant_set:
+                        res_s['rank'] = k
+                        back_df.append(res_s)
+                        variant_set.add(variant_id)
+                if len(back_df)>0:
+                    res_df.append(pd.concat(back_df, axis=1).T)
+            else:  # single independent variant
+                forward_df['rank'] = 1
+                res_df.append(forward_df)
+
     res_df = pd.concat(res_df, axis=0)
     res_df.index.name = 'phenotype_id'
     logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))

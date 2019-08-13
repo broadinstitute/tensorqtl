@@ -325,7 +325,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
             m,_ = r2_t.max(0)
             max_r2_t = torch.max(m, max_r2_t)
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-        max_r2 = max_r2_t.cpu()
+        max_r2 = max_r2_t.cpu().numpy().astype(np.float64)
         tstat = np.sqrt( dof*max_r2 / (1-max_r2) )
         minp_empirical = 2*stats.t.cdf(-np.abs(tstat), dof)
         beta_shape1, beta_shape2, true_dof, minp_vec = fit_beta_parameters(max_r2, dof, tol=1e-4, return_minp=True)

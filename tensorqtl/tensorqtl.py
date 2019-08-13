@@ -9,6 +9,7 @@ import argparse
 
 sys.path.insert(1, os.path.dirname(__file__))
 from core import *
+from post import *
 import genotypeio
 import cis
 import trans

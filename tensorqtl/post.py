@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.stats as stats
+import subprocess
 
 has_rpy2 = False
 e = subprocess.call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
