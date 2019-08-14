@@ -58,8 +58,7 @@ def main():
     if args.covariates is not None:
         logger.write('  * reading covariates ({})'.format(args.covariates))
         covariates_df = pd.read_csv(args.covariates, sep='\t', index_col=0).T
-        # assert np.all(phenotype_df.columns==covariates_df.index)
-        phenotype_df = phenotype_df[covariates_df.index]   ######################### in case inputs are not sorted the same way
+        assert np.all(phenotype_df.columns==covariates_df.index)
     if args.interaction is not None:
         logger.write('  * reading interaction term ({})'.format(args.interaction))
         interaction_s = pd.read_csv(args.interaction, sep='\t', index_col=0, header=None, squeeze=True)

@@ -157,7 +157,6 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     # calculate b, b_se
     # [(ng x 3 x 3) x (ng x 3 x ns)] x (ng x ns x np) = (ng x 3 x np)
     b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), torch.transpose(p0_tile_t, 1, 2))
-    # b_t = tf.matmul(tf.matmul(Xinv, X_t, transpose_b=True), p0_tile_t, transpose_b=True)
     dof = residualizer.dof - 2
     if nps==1:
         r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
@@ -167,15 +166,12 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         # r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
         # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
         # b_se_t = tf.sqrt( tf.matrix_diag_part(Xinv) * tf.expand_dims(rss_t, 1) / dof )
-        # b_t = tf.squeeze(b_t, axis=2)
     else:
         # b_t = tf.matmul(p0_tile_t, tf.matmul(Xinv, X_t, transpose_b=True), transpose_b=True)
         # convert to ng x np x 3??
         r_t = torch.matmul(X_t, b_t) - torch.transpose(p0_tile_t, 1, 2)  # (ng x ns x np)
         rss_t = (r_t*r_t).sum(1)  # ng x np
         b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
-        # r_t = tf.matmul(X_t, b_t) - tf.transpose(p0_tile_t, [0,2,1])  # (ng x ns x np)
-        # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)  # ng x np
         # b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
 
     tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x 3 x np)
