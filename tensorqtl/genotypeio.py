@@ -20,7 +20,7 @@ def _check_dependency(name):
 
 
 def _print_progress(k, n, entity):
-    s = '\r  * processing {} {}/{}'.format(entity, k, n)
+    s = '\r    processing {} {}/{}'.format(entity, k, n)
     if k == n:
         s += '\n'
     sys.stdout.write(s)
@@ -395,21 +395,26 @@ class InputGeneratorCis(object):
         """
         if chrom is None:
             phenotype_ids = self.phenotype_df.index
+            chr_offset = 0
         else:
             phenotype_ids = self.phenotype_pos_df[self.phenotype_pos_df['chr']==chrom].index
+            offset_dict = {i:j for i,j in zip(*np.unique(self.phenotype_pos_df['chr'], return_index=True))}
+            chr_offset = offset_dict[chrom]
+
+        index_dict = {j:i for i,j in enumerate(self.phenotype_df.index)}
 
         if group_s is None:
-            for k,phenotype_id in enumerate(phenotype_ids):
+            for k,phenotype_id in enumerate(phenotype_ids, chr_offset+1):
                 if verbose:
                     _print_progress(k, self.n_phenotypes, 'phenotype')
-                p = self.phenotype_df.values[k]
+                p = self.phenotype_df.values[index_dict[phenotype_id]]
+                # p = self.phenotype_df.values[k]
                 r = self.cis_ranges[phenotype_id]
                 yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
         else:
             group_s = group_s.loc[self.phenotype_df.index].copy()
             gdf = group_s.groupby(group_s, sort=False)
-            index_dict = {j:i for i,j in enumerate(self.phenotype_df.index)}
-            for k,(group_id,g) in enumerate(gdf, 1):
+            for k,(group_id,g) in enumerate(gdf, chr_offset+1):
                 if verbose:
                     _print_progress(k, len(gdf), 'phenotype group')
                 # check that ranges are the same for all phenotypes within group

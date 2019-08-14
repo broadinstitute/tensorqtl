@@ -57,8 +57,10 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
     corr_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)  # genotypes x permutations
     r2_perm_t,_ = corr_t[~torch.isnan(corr_t).any(1),:].max(0)
 
-    ix = r_nominal_t.pow(2).argmax()
-    return r_nominal_t[ix], std_ratio_t[ix], ix, r2_perm_t, genotypes_t[ix]  # , r_nominal_t.shape[0]
+    r2_nominal_t = r_nominal_t.pow(2)
+    r2_nominal_t[torch.isnan(r2_nominal_t)] = -1  # workaround for nanargmax()
+    ix = r2_nominal_t.argmax()
+    return r_nominal_t[ix], std_ratio_t[ix], ix, r2_perm_t, genotypes_t[ix]
 
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
@@ -187,18 +189,21 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
         # compute p-values and write current chromosome
         chr_res_df = pd.concat(chr_res_df, copy=False)
         if interaction_s is None:
-            chr_res_df['pval_nominal'] = 2*stats.t.cdf(-chr_res_df['pval_nominal'].abs(), dof)
+            m = chr_res_df['pval_nominal'].notnull()
+            chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
         else:
-            chr_res_df['pval_g'] = 2*stats.t.cdf(-chr_res_df['pval_g'].abs(), dof)
-            chr_res_df['pval_i'] = 2*stats.t.cdf(-chr_res_df['pval_i'].abs(), dof)
-            chr_res_df['pval_gi'] = 2*stats.t.cdf(-chr_res_df['pval_gi'].abs(), dof)
+            m = chr_res_df['pval_gi'].notnull()
+            chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
+            chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
+            chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
         print('  * writing output')
         chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
     if interaction_s is not None:
         best_assoc = pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects()
-        best_assoc['pval_g'] = 2*stats.t.cdf(-best_assoc['pval_g'].abs(), dof)
-        best_assoc['pval_i'] = 2*stats.t.cdf(-best_assoc['pval_i'].abs(), dof)
-        best_assoc['pval_gi'] = 2*stats.t.cdf(-best_assoc['pval_gi'].abs(), dof)
+        m = best_assoc['pval_g'].notnull()
+        best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
+        best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
+        best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), dof)
         best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
                           sep='\t', float_format='%.6g')
     logger.write('done.')
@@ -407,7 +412,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     if group_s is None:
         for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
             # copy genotypes to GPU
-            phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device).unsqueeze(0)
+            phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
@@ -464,7 +469,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                     if x[0] <= signif_threshold and variant_id not in variant_set:
                         tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_tss[phenotype_id]
-                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes.shape[0], dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
                         res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = x
                         res_s['rank'] = k
                         back_df.append(res_s)
