@@ -17,7 +17,7 @@ import trans
 
 def main():
     parser = argparse.ArgumentParser(description='tensorQTL: GPU-based QTL mapper')
-    parser.add_argument('genotype_path', help='Genotypes/dosages in PLINK or tfrecord format')
+    parser.add_argument('genotype_path', help='Genotypes in PLINK format')
     parser.add_argument('phenotype_bed', help='Phenotypes in BED format')
     parser.add_argument('prefix', help='Prefix for output file names')
     parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'trans'], help='Mapping mode. Default: cis')
@@ -90,29 +90,32 @@ def main():
     else:
         group_s = None
 
+    # load genotypes
+    pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
+    genotype_df = pd.DataFrame(pr.get_all_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
+    variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
+    chr_s = pr.bim['chrom']
+
     if args.mode.startswith('cis'):
-        pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns)
         if args.mode=='cis':
-            res_df = cis.map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df,
-                             group_s=group_s, nperm=args.permutations, window=args.window, logger=logger, seed=args.seed)
+            res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
+                                 group_s=group_s, nperm=args.permutations, window=args.window,
+                                 logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
-            out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             if has_rpy2 and group_s is None:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda)
+            out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', float_format='%.6g')
         elif args.mode=='cis_nominal':
-            if interaction_s is None:
-                cis.map_nominal(pr, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
-                                window=args.window, output_dir=args.output_dir, group_s=group_s, logger=logger)
-            else:
-                cid.map_nominal_interaction(pr, phenotype_df, phenotype_pos_df, covariates_df, interaction_s,
-                                args.prefix, maf_threshold_interaction=args.maf_threshold_interaction,
-                                window=args.window, best_only=args.best_only, output_dir=args.output_dir, logger=logger)
+            cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
+                            interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
+                            group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
         elif args.mode=='cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
-            res_df = cis.map_independent(pr, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
-                                         fdr=args.fdr, nperm=args.permutations, window=args.window, logger=logger, seed=args.seed)
+            res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
+                                         group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
+                                         logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
@@ -123,7 +126,6 @@ def main():
             pval_threshold = 1e-5
             logger.write('  * p-value threshold: {:.2g}'.format(pval_threshold))
 
-        genotype_df = genotypeio.load_genotypes(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
         pval_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_s,
                                   return_sparse=return_sparse, pval_threshold=pval_threshold,
                                   maf_threshold=maf_threshold, batch_size=args.batch_size,
