@@ -72,6 +72,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
     Association results for each chromosome are written to parquet files
     in the format <output_dir>/<prefix>.cis_qtl_pairs.<chr>.parquet
     """
+    assert np.all(phenotype_df.columns==covariates_df.index)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if logger is None:
@@ -85,6 +86,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(variant_df.shape[0]))
     if interaction_s is not None:
+        assert np.all(interaction_s.index==covariates_df.index)
         logger.write('  * including interaction term')
         if maf_threshold_interaction>0:
             logger.write('    * using {:.2f} MAF threshold'.format(maf_threshold_interaction))
@@ -140,7 +142,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                     ('slope_se', slope_se),
                 ]))
             else:
-                res = calculate_interaction_nominal(genotypes_t, phenotype_t, interaction_t, residualizer,
+                res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
                                                     interaction_mask_t=interaction_mask_t,
                                                     maf_threshold_interaction=maf_threshold_interaction,
                                                     return_sparse=False)
@@ -170,7 +172,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                         ('b_gi', b[:,2]),
                         ('b_gi_se', b_se[:,2]),
                     ]))
-                    best_assoc.append(res_df.loc[res_df['pval_gi'].idxmin()])  # top variant only
+                    best_assoc.append(res_df.loc[res_df['pval_gi'].abs().idxmax()])  # top variant only (pval_gi is t-statistic here, hence max)
                 else:
                     res_df = None
 
@@ -198,6 +200,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
         print('  * writing output')
         chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
+
     if interaction_s is not None:
         best_assoc = pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects()
         m = best_assoc['pval_g'].notnull()
