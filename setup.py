@@ -29,7 +29,7 @@ setup(
     'pyarrow',
     'scipy',
     'pandas-plink',
-    'tensorflow-gpu',
+    'torch',
     ],
     classifiers = [
         "Programming Language :: Python :: 3",
