@@ -202,7 +202,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
         chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
 
     if interaction_s is not None:
-        best_assoc = pd.concat(best_assoc, axis=1).T.set_index('phenotype_id').infer_objects()
+        best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
         m = best_assoc['pval_g'].notnull()
         best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
         best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
@@ -350,7 +350,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
             res_df.append(res_s)
 
-    res_df = pd.concat(res_df, axis=1).T
+    res_df = pd.concat(res_df, axis=1, sort=False).T
     res_df.index.name = 'phenotype_id'
     logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
     logger.write('done.')
@@ -382,7 +382,11 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     signif_df = signif_df[cols]
     signif_threshold = signif_df['pval_beta'].max()
     # subset significant phenotypes
-    ix = signif_df.index[signif_df.index.isin(phenotype_df.index)]
+    if group_s is None:
+        ix = signif_df.index[signif_df.index.isin(phenotype_df.index)]
+    else:
+        ix = group_s[group_s.isin(signif_df['group_id'])].index
+        ix = ix[ix.isin(phenotype_df.index)]
     phenotype_df = phenotype_df.loc[ix]
     phenotype_pos_df = phenotype_pos_df.loc[ix]
 
@@ -448,7 +452,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     forward_df.append(res_s)
                 else:
                     break
-            forward_df = pd.concat(forward_df, axis=1).T
+            forward_df = pd.concat(forward_df, axis=1, sort=False).T
             dosage_df = pd.DataFrame(dosage_dict)
 
             # 2) backward pass
@@ -478,7 +482,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                         back_df.append(res_s)
                         variant_set.add(variant_id)
                 if len(back_df)>0:
-                    res_df.append(pd.concat(back_df, axis=1).T)
+                    res_df.append(pd.concat(back_df, axis=1, sort=False).T)
             else:  # single independent variant
                 forward_df['rank'] = 1
                 res_df.append(forward_df)
@@ -491,7 +495,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
             impute_mean(genotypes_t)
 
             # 1) forward pass
-            forward_df = [signif_df.loc[phenotype_id]]  # initialize results with top variant
+            forward_df = [signif_df[signif_df['group_id']==group_id].iloc[0]]  # initialize results with top variant
             covariates = covariates_df.values.copy()  # initialize covariates
             dosage_dict = {}
             while True:
@@ -507,11 +511,11 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
                 # iterate over phenotypes
                 buf = []
-                for phenotype in phenotypes:
+                for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                     phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                     res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
                     res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
-                    res[2] = genotype_range[var_ix]
+                    res[2] = genotype_range[res[2]]
                     buf.append(res + [genotypes.shape[0], phenotype_id])
                 res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
 
@@ -520,17 +524,17 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     forward_df.append(res_s)
                 else:
                     break
-            forward_df = pd.concat(forward_df, axis=1).T
+            forward_df = pd.concat(forward_df, axis=1, sort=False).T
             dosage_df = pd.DataFrame(dosage_dict)
 
             # 2) backward pass
             if forward_df.shape[0]>1:
                 back_df = []
                 variant_set = set()
-                for k,i in enumerate(forward_df['variant_id'], 1):
+                for k,variant_id in enumerate(forward_df['variant_id'], 1):
                     covariates = np.hstack([
                         covariates_df.values,
-                        dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values,
+                        dosage_df[np.setdiff1d(forward_df['variant_id'], variant_id)].values,
                     ])
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                     covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
@@ -539,11 +543,11 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
                     # iterate over phenotypes
                     buf = []
-                    for phenotype in phenotypes:
+                    for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                         res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
                         res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
-                        res[2] = genotype_range[var_ix]
+                        res[2] = genotype_range[res[2]]
                         buf.append(res + [genotypes.shape[0], phenotype_id])
                     res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
 
@@ -552,12 +556,12 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                         back_df.append(res_s)
                         variant_set.add(variant_id)
                 if len(back_df)>0:
-                    res_df.append(pd.concat(back_df, axis=1).T)
+                    res_df.append(pd.concat(back_df, axis=1, sort=False).T)
             else:  # single independent variant
                 forward_df['rank'] = 1
                 res_df.append(forward_df)
 
-    res_df = pd.concat(res_df, axis=0)
+    res_df = pd.concat(res_df, axis=0, sort=False)
     res_df.index.name = 'phenotype_id'
     logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
     logger.write('done.')
