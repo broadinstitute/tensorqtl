@@ -228,16 +228,16 @@ def beta_log_likelihood(x, shape1, shape2):
     return (1.0-shape1)*np.sum(np.log(x)) + (1.0-shape2)*np.sum(np.log(1.0-x)) + len(x)*logbeta
 
 
-def fit_beta_parameters(r2_perm, dof, tol=1e-4, return_minp=False):
+def fit_beta_parameters(r2_perm, dof_init, tol=1e-4, return_minp=False):
     """
       r2_perm:    array of max. r2 values from permutations
-      dof:        degrees of freedom
+      dof_init:   degrees of freedom
     """
     try:
-        true_dof = scipy.optimize.newton(lambda x: df_cost(r2_perm, x), dof, tol=tol, maxiter=50)
+        true_dof = scipy.optimize.newton(lambda x: df_cost(r2_perm, x), dof_init, tol=tol, maxiter=50)
     except:
         print('WARNING: scipy.optimize.newton failed to converge (running scipy.optimize.minimize)')
-        res = scipy.optimize.minimize(lambda x: np.abs(df_cost(r2_perm, x)), dof, method='Nelder-Mead', tol=tol)
+        res = scipy.optimize.minimize(lambda x: np.abs(df_cost(r2_perm, x)), dof_init, method='Nelder-Mead', tol=tol)
         true_dof = res.x[0]
 
     pval = pval_from_corr(r2_perm, true_dof)
@@ -252,13 +252,13 @@ def fit_beta_parameters(r2_perm, dof, tol=1e-4, return_minp=False):
         return beta_shape1, beta_shape2, true_dof
 
 
-def calculate_beta_approx_pval(r2_perm, r2_nominal, dof, tol=1e-4):
+def calculate_beta_approx_pval(r2_perm, r2_nominal, dof_init, tol=1e-4):
     """
       r2_nominal: nominal max. r2 (scalar or array)
       r2_perm:    array of max. r2 values from permutations
-      dof:        degrees of freedom
+      dof_init:   degrees of freedom
     """
-    beta_shape1, beta_shape2, true_dof = fit_beta_parameters(r2_perm, dof, tol)
+    beta_shape1, beta_shape2, true_dof = fit_beta_parameters(r2_perm, dof_init, tol)
     pval_true_dof = pval_from_corr(r2_nominal, true_dof)
     pval_beta = stats.beta.cdf(pval_true_dof, beta_shape1, beta_shape2)
     return pval_beta, beta_shape1, beta_shape2, true_dof, pval_true_dof

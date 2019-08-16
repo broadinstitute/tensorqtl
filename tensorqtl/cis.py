@@ -270,7 +270,7 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
     variant_id = variant_df.index[var_ix]
     tss_distance = variant_df['pos'].values[var_ix] - tss
     res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
-    res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+    res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof*0.25)
     res_s['group_id'] = group_id
     res_s['group_size'] = len(buf)
     return res_s

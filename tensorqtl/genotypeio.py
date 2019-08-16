@@ -347,7 +347,7 @@ class InputGeneratorCis(object):
         self.n_phenotypes = phenotype_df.shape[0]
         self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
         self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
-        self.chrs = variant_df['chrom'].unique()
+        self.chrs = phenotype_pos_df['chr'].unique()
         self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
 
         # check phenotypes & calculate genotype ranges
