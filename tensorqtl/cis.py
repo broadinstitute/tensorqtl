@@ -383,22 +383,23 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     signif_threshold = signif_df['pval_beta'].max()
     # subset significant phenotypes
     if group_s is None:
-        ix = signif_df.index[signif_df.index.isin(phenotype_df.index)]
+        ix = phenotype_df.index[phenotype_df.index.isin(signif_df.index)]
     else:
-        ix = group_s[group_s.isin(signif_df['group_id'])].index
-        ix = ix[ix.isin(phenotype_df.index)]
-    phenotype_df = phenotype_df.loc[ix]
-    phenotype_pos_df = phenotype_pos_df.loc[ix]
+        ix = group_s[phenotype_df.index].loc[group_s[phenotype_df.index].isin(signif_df['group_id'])].index
 
     logger.write('cis-QTL mapping: conditionally independent variants')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
-    logger.write('  * {} significant phenotypes'.format(signif_df.shape[0]))
-    if group_s is not None:
-        logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
+    if group_s is None:
+        logger.write('  * {}/{} significant phenotypes'.format(signif_df.shape[0], cis_df.shape[0]))
+    else:
+        logger.write('  * {}/{} significant groups'.format(signif_df.shape[0], cis_df.shape[0]))
+        logger.write('    {}/{} phenotypes'.format(len(ix), phenotype_df.shape[0]))
         group_dict = group_s.to_dict()
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(genotype_df.shape[0]))
     # print('Significance threshold: {}'.format(signif_threshold))
+    phenotype_df = phenotype_df.loc[ix]
+    phenotype_pos_df = phenotype_pos_df.loc[ix]
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
