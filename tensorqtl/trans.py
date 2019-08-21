@@ -151,13 +151,15 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             ix1 = []
             for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-                res = calculate_interaction_nominal(genotypes_t[:, genotype_ix_t], phenotypes_t, interaction_t, residualizer,
-                                                    interaction_mask_t=interaction_mask_t,
-                                                    maf_threshold_interaction=maf_threshold,
+                genotypes_t, mask_t = filter_maf_interaction(genotypes_t[:, genotype_ix_t],
+                                                             interaction_mask_t=interaction_mask_t,
+                                                             maf_threshold_interaction=maf_threshold_interaction)
+                res = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
                                                     return_sparse=return_sparse,
                                                     tstat_threshold=tstat_threshold)
                 # res: tstat_g, tstat_i, tstat_gi, maf, mask, ix
-                tstat_g, tstat_i, tstat_gi, maf, mask, ix = [i.cpu().numpy() for i in res]
+                tstat_g, tstat_i, tstat_gi, maf, ix = [i.cpu().numpy() for i in res]
+                mask = mask_t.cpu().numpy()
                 # convert sparse indexes
                 if len(ix)>0:
                     variant_ids = variant_ids[mask.astype(bool)]

@@ -77,6 +77,17 @@ def filter_maf(genotypes_t, variant_ids, maf_threshold):
     return genotypes_t, variant_ids, maf_t
 
 
+def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_interaction=0.05):
+    # filter monomorphic sites (to avoid colinearity)
+    mask_t = ~((genotypes_t==0).all(1) | (genotypes_t==1).all(1) | (genotypes_t==2).all(1))
+    if interaction_mask_t is not None:
+        upper_t = calculate_maf(genotypes_t[:,interaction_mask_t]) >= maf_threshold_interaction
+        lower_t = calculate_maf(genotypes_t[:,~interaction_mask_t]) >= maf_threshold_interaction
+        mask_t = mask_t & upper_t & lower_t
+    genotypes_t = genotypes_t[mask_t]
+    return genotypes_t, mask_t
+
+
 def impute_mean(genotypes_t):
     """Impute missing genotypes to mean"""
     m = genotypes_t == -1
@@ -115,21 +126,12 @@ def calculate_corr(genotype_t, phenotype_t, residualizer, return_sd=False):
 
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
-                                  interaction_mask_t=None, maf_threshold_interaction=0.05,
                                   return_sparse=False, tstat_threshold=None):
     """
     genotypes_t:   [num_genotypes x num_samples]
     phenotypes_t:   [num_phenotypes x num_samples]
     interaction_t: [1 x num_samples]
     """
-    # filter monomorphic sites (to avoid colinearity in X)
-    mask_t = ~((genotypes_t==0).all(1) | (genotypes_t==1).all(1) | (genotypes_t==2).all(1))
-    if interaction_mask_t is not None:
-        upper_t = calculate_maf(genotypes_t[:,interaction_mask_t]) >= maf_threshold_interaction
-        lower_t = calculate_maf(genotypes_t[:,~interaction_mask_t]) >= maf_threshold_interaction
-        mask_t = mask_t & upper_t & lower_t
-
-    genotypes_t = genotypes_t[mask_t]
     ng, ns = genotypes_t.shape
     nps = phenotypes_t.shape[0]
 
@@ -161,7 +163,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     if nps==1:
         r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
         rss_t = (r_t*r_t).sum(1)
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()] * rss_t.unsqueeze(1) / dof)
+        b_se_t = torch.sqrt(Xinv.view(-1)[::4] * rss_t.unsqueeze(1) / dof)
         b_t = b_t.squeeze(2)
         # r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
         # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
@@ -171,7 +173,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         # convert to ng x np x 3??
         r_t = torch.matmul(X_t, b_t) - torch.transpose(p0_tile_t, 1, 2)  # (ng x ns x np)
         rss_t = (r_t*r_t).sum(1)  # ng x np
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
+        b_se_t = torch.sqrt(Xinv.view(-1)[::4].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
         # b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
 
     tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x 3 x np)
@@ -193,7 +195,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         ma_samples_t = torch.where(ix_t, a, b)
         a = (genotypes_t * m.float()).sum(1).int()
         ma_count_t = torch.where(ix_t, a, n2-a)
-        return tstat_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t, mask_t
+        return tstat_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t
 
     else:  # sparse output
         tstat_g_t =  tstat_t[:,0,:]  # genotypes x phenotypes
@@ -204,7 +206,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         tstat_i_t = tstat_i_t[m]
         tstat_gi_t = tstat_gi_t[m]
         ix = m.nonzero()  # indexes: [genotype, phenotype]
-        return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], mask_t, ix
+        return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], ix
 
 #------------------------------------------------------------------------------
 #  Functions for beta-approximating empirical p-values

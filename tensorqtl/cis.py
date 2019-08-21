@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 
 sys.path.insert(1, os.path.dirname(__file__))
-import genotypeio
+import genotypeio, eigenmt, statsfunc
 from core import *
 
 
@@ -142,18 +142,21 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                     ('slope_se', slope_se),
                 ]))
             else:
-                res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
-                                                    interaction_mask_t=interaction_mask_t,
-                                                    maf_threshold_interaction=maf_threshold_interaction,
-                                                    return_sparse=False)
-                tstat, b, b_se, maf, ma_samples, ma_count, mask = [i.cpu().numpy() for i in res]
-                if len(tstat)>0:
+                genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
+                                                             maf_threshold_interaction=maf_threshold_interaction)
+                if genotypes_t.shape[0]>0:
+                    res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
+                                                        return_sparse=False)
+                    # m_eff = eigenmt.fit(genotypes_t)  # compute eigenMT correction
+
+                    tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                    mask = mask_t.cpu().numpy()
+
                     r = igc.cis_ranges[phenotype_id]
                     variant_ids = variant_df.index[r[0]:r[-1]+1]
                     tss_distance = np.int32(variant_df['pos'].values[r[0]:r[-1]+1] - igc.phenotype_tss[phenotype_id])
-                    if mask is not None:
-                        variant_ids = variant_ids[mask]
-                        tss_distance = tss_distance[mask]
+                    variant_ids = variant_ids[mask]
+                    tss_distance = tss_distance[mask]
                     nv = len(variant_ids)
                     res_df = pd.DataFrame(OrderedDict([
                         ('phenotype_id', [phenotype_id]*nv),
@@ -172,8 +175,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                         ('b_gi', b[:,2]),
                         ('b_gi_se', b_se[:,2]),
                     ]))
-                    best_assoc.append(res_df.loc[res_df['pval_gi'].abs().idxmax()])  # top variant only (pval_gi is t-statistic here, hence max)
-                else:
+
+                    top_s = res_df.loc[res_df['pval_gi'].abs().idxmax()].copy()
+                    # top_s['tests_emt'] = m_eff
+
+                    best_assoc.append(top_s)  # top variant only (pval_gi is t-statistic here, hence max)
+                else:  # all genotypes in window were filtered out
                     res_df = None
 
             if group_s is not None and group_dict[phenotype_id]==group_dict.get(prev_phenotype_id):
@@ -207,6 +214,8 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
         best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
         best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
         best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), dof)
+        # best_assoc['pval_emt'] = np.minimum(best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
+        # best_assoc['pval_adj_bh'] = statsfunc.padjust_bh(best_assoc['pval_emt'])
         best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
                           sep='\t', float_format='%.6g')
     logger.write('done.')
