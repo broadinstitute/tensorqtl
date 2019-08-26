@@ -109,7 +109,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             else:
                 r2_t = r2_t.type(torch.float64)
                 tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
-                res.append(tstat)
+                res.append(tstat.cpu())
         logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
         del phenotypes_t
         del residualizer
@@ -138,11 +138,18 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     else:  # interaction model
         dof = n_samples - 4 - covariates_df.shape[1]
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
-        interaction_mask_t = torch.ByteTensor(interaction_s >= interaction_s.median()).to(device)
+        interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
 
         ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.float32)
         start_time = time.time()
         if return_sparse:
+
+            nps = phenotypes_t.shape[0]
+            i0_t = interaction_t - interaction_t.mean()
+            p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)
+            p0_t = residualizer.transform(p0_t, center=False)
+            i0_t = residualizer.transform(i0_t, center=False)
+
             tstat_g_list = []
             tstat_i_list = []
             tstat_gi_list = []
@@ -153,22 +160,56 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
                 genotypes_t, mask_t = filter_maf_interaction(genotypes_t[:, genotype_ix_t],
                                                              interaction_mask_t=interaction_mask_t,
-                                                             maf_threshold_interaction=maf_threshold_interaction)
-                res = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
-                                                    return_sparse=return_sparse,
-                                                    tstat_threshold=tstat_threshold)
-                # res: tstat_g, tstat_i, tstat_gi, maf, mask, ix
-                tstat_g, tstat_i, tstat_gi, maf, ix = [i.cpu().numpy() for i in res]
-                mask = mask_t.cpu().numpy()
-                # convert sparse indexes
-                if len(ix)>0:
-                    variant_ids = variant_ids[mask.astype(bool)]
-                    tstat_g_list.append(tstat_g)
-                    tstat_i_list.append(tstat_i)
-                    tstat_gi_list.append(tstat_gi)
-                    maf_list.append(maf)
-                    ix0.extend(variant_ids[ix[:,0]].tolist())
-                    ix1.extend(phenotype_df.index[ix[:,1]].tolist())
+                                                             maf_threshold_interaction=maf_threshold)
+                if genotypes_t.shape[0]>0:
+                    ng, ns = genotypes_t.shape
+
+                    # calculate MAF
+                    af_t = genotypes_t.sum(1) / (2*ns)
+                    maf_t = torch.where(af_t<=0.5, af_t, 1 - af_t)
+
+                    repi0_t = i0_t.repeat(ng, 1)
+
+                    # centered inputs
+                    g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)
+                    gi_t = genotypes_t * interaction_t
+                    gi0_t = gi_t - gi_t.mean(1, keepdim=True)
+                    # residualize rows
+                    g0_t = residualizer.transform(g0_t, center=False)
+                    gi0_t = residualizer.transform(gi0_t, center=False)
+
+                    # regression
+                    X_t = torch.stack([g0_t, repi0_t, gi0_t], 2)  # ng x ns x 3
+                    Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
+                    b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), p0_t.t())  # ng x 3 x np
+                    dof = residualizer.dof - 2
+
+                    rss_t = (torch.matmul(X_t, b_t) - p0_t.t()).pow(2).sum(1)  # ng x np
+                    b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
+                    tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x 3 x np)
+                    tstat_g_t =  tstat_t[:,0,:]  # genotypes x phenotypes
+                    tstat_i_t =  tstat_t[:,1,:]
+                    tstat_gi_t = tstat_t[:,2,:]
+                    m = tstat_gi_t.abs() >= tstat_threshold
+                    tstat_g_t = tstat_g_t[m]
+                    tstat_i_t = tstat_i_t[m]
+                    tstat_gi_t = tstat_gi_t[m]
+                    ix = m.nonzero()  # indexes: [genotype, phenotype]
+                    maf_t =  maf_t[ix[:,0]]
+                    # return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], ix
+
+                    res = [tstat_g_t, tstat_i_t, tstat_gi_t, maf_t, ix]
+                    tstat_g, tstat_i, tstat_gi, maf, ix = [i.cpu().numpy() for i in res]
+                    mask = mask_t.cpu().numpy()
+                    # convert sparse indexes
+                    if len(ix)>0:
+                        variant_ids = variant_ids[mask.astype(bool)]
+                        tstat_g_list.append(tstat_g)
+                        tstat_i_list.append(tstat_i)
+                        tstat_gi_list.append(tstat_gi)
+                        maf_list.append(maf)
+                        ix0.extend(variant_ids[ix[:,0]].tolist())
+                        ix1.extend(phenotype_df.index[ix[:,1]].tolist())
 
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
@@ -178,7 +219,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             pval_gi = 2*stats.t.cdf(-np.abs(np.concatenate(tstat_gi_list)), dof)
             maf = np.concatenate(maf_list)
 
-            pval_df = pd.DataFrame(np.c_[ix0, ix1, pval_g, pval_i, pval_gi, maf], 
+            pval_df = pd.DataFrame(np.c_[ix0, ix1, pval_g, pval_i, pval_gi, maf],
                                    columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'maf']
                                    ).astype({'pval_g':np.float64, 'pval_i':np.float64, 'pval_gi':np.float64, 'maf':np.float32})
             return pval_df
@@ -186,14 +227,16 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             output_list = []
             for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-                res = calculate_interaction_nominal(genotypes_t[:, genotype_ix_t], phenotypes_t, interaction_t, residualizer,
-                                                    interaction_mask_t=interaction_mask_t,
-                                                    maf_threshold_interaction=maf_threshold,
+                genotypes_t, mask_t = filter_maf_interaction(genotypes_t[:, genotype_ix_t],
+                                                             interaction_mask_t=interaction_mask_t,
+                                                             maf_threshold_interaction=maf_threshold)
+                res = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
                                                     return_sparse=return_sparse)
-                # res: tstat, b, b_se, maf, ma_samples, ma_count, mask
+                # res: tstat, b, b_se, maf, ma_samples, ma_count
                 res = [i.cpu().numpy() for i in res]
-                res[-1] = variant_ids[res[-1].astype(bool)]
-                output_list.append(res)
+                mask = mask_t.cpu().numpy()
+                variant_ids = variant_ids[mask.astype(bool)]
+                output_list.append(res + [variant_ids])
             logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
             # concatenate outputs
