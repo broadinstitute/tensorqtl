@@ -58,7 +58,7 @@ class Residualizer(object):
             M0_t = M_t - M_t.mean(1, keepdim=True)
         else:
             M0_t = M_t
-        return M_t - torch.mm(torch.mm(M0_t, self.Q_t), torch.transpose(self.Q_t, 0, 1))  # keep original mean
+        return M_t - torch.mm(torch.mm(M0_t, self.Q_t), self.Q_t.t())  # keep original mean
 
 
 def calculate_maf(genotype_t, alleles=2):
@@ -120,9 +120,9 @@ def calculate_corr(genotype_t, phenotype_t, residualizer, return_sd=False):
 
     # correlation
     if return_sd:
-        return torch.mm(genotype_res_t, torch.transpose(phenotype_res_t, 0, 1)), torch.sqrt(pstd / gstd)
+        return torch.mm(genotype_res_t, phenotype_res_t.t()), torch.sqrt(pstd.reshape(1,-1) / gstd.reshape(-1,1))
     else:
-        return torch.mm(genotype_res_t, torch.transpose(phenotype_res_t, 0, 1))
+        return torch.mm(genotype_res_t, phenotype_res_t.t())
 
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
