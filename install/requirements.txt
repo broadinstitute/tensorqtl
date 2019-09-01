@@ -6,6 +6,5 @@ ipython
 jupyter
 matplotlib
 pyarrow
-tensorflow-gpu
-tensorflow-probability
+torch
 rpy2

@@ -1,4 +1,4 @@
-### Setup CUDA drivers and TensorFlow on GCP
+### Setup CUDA drivers and PyTorch on GCP
 
 Launch a new instance configured with Ubuntu 18.04 LTS and a GPU, clone this repository, and run the following:
 #### Install CUDA
@@ -18,7 +18,7 @@ virtualenv venv
 source venv/bin/activate
 pip3 install -r requirements.txt
 # verify
-python -c "import tensorflow as tf; print(tf.__version__)"
+python -c "import torch; print(torch.__version__)"
 ```
 
 #### Install rmate (optional)

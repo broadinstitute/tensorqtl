@@ -1,4 +1,3 @@
-import tensorflow as tf
 import pandas as pd
 import tempfile
 import numpy as np
@@ -18,6 +17,14 @@ def _check_dependency(name):
     e = subprocess.call('which '+name, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if e!=0:
         raise RuntimeError('External dependency \''+name+'\' not installed')
+
+
+def _print_progress(k, n, entity):
+    s = '\r    processing {} {}/{}'.format(entity, k, n)
+    if k == n:
+        s += '\n'
+    sys.stdout.write(s)
+    sys.stdout.flush()
 
 
 class BackgroundGenerator(threading.Thread):
@@ -56,22 +63,8 @@ class background:
 
 
 #------------------------------------------------------------------------------
-#  Functions for writing VCFs to tfrecord
+#  Functions for writing VCFs
 #------------------------------------------------------------------------------
-def _bytes_feature(values):
-    """Input must be result of v.tobytes() where v is a 1D np.float32 array"""
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[values]))
-
-
-def example_bytes(values):
-    """Input must be float32 np.array"""
-    return tf.train.Example(
-        features=tf.train.Features(
-            feature={'dosages': _bytes_feature(values.tobytes())}
-        )
-    )
-
-
 def _get_vcf_opener(vcfpath):
     if vcfpath.endswith('.vcf.gz'):
         return gzip.open(vcfpath, 'rt')
@@ -104,58 +97,6 @@ def _get_field_ix(line, field):
         raise ValueError('FORMAT field does not contain {}'.format(field))
     return fmt.index(field)
 
-
-def _write_tfrecord_indices(tfrecord, variant_ids, sample_ids):
-    """Write tfrecord index files with sample and variant IDs"""
-    with open(tfrecord+'.samples', 'w') as f:
-        f.write('\n'.join(sample_ids)+'\n')
-    with gzip.open(tfrecord+'.variants.gz', 'wt', compresslevel=6) as f:
-        f.write('\n'.join(variant_ids)+'\n')
-
-
-def vcf_to_tfrecord(vcfpath, tfrecord, field='GT'):
-    """Convert VCF to tfrecord"""
-
-    variant_ids = []
-    writer = tf.python_io.TFRecordWriter(tfrecord)
-    with _get_vcf_opener(vcfpath) as vcf:
-        for header in vcf:
-            if header[:2]=='##': continue
-            break
-        sample_ids = header.strip().split('\t')[9:]
-
-        # read first line, parse AF
-        line = vcf.readline().strip().split('\t')
-        ix = _get_field_ix(line, field)
-
-        # process 1st variant
-        variant_ids.append(line[2])
-        g = parse_genotypes([i.split(':')[ix] for i in line[9:]], field=field)
-        writer.write(example_bytes(g).SerializeToString())
-        for k,line in enumerate(vcf, 2):
-            line = line.strip().split('\t')
-            variant_ids.append(line[2])
-            g = parse_genotypes([i.split(':')[ix] for i in line[9:]], field=field)
-            writer.write(example_bytes(g).SerializeToString())
-            if np.mod(k,1000)==0:
-                print('\rVariants parsed: {}'.format(k), end='')
-    writer.close()
-
-    _write_tfrecord_indices(tfrecord, variant_ids, sample_ids)
-
-
-def dataframe_to_tfrecord(dosage_df, tfrecord):
-    """Write DataFrame to tfrecord"""
-    writer = tf.python_io.TFRecordWriter(tfrecord)
-    for k,(i,r) in enumerate(dosage_df.iterrows(),1):
-        writer.write(example_bytes(r.values.astype(np.float32)).SerializeToString())
-        if np.mod(k,1000)==0:
-            print('\rProcessed {}/{} variants'.format(k, dosage_df.shape[0]), end='')
-    print('\rProcessed {}/{} variants'.format(k, dosage_df.shape[0]))
-    writer.close()
-
-    _write_tfrecord_indices(tfrecord, dosage_df.index, dosage_df.columns)
-
 #------------------------------------------------------------------------------
 #  Functions for loading regions/variants from VCFs
 #------------------------------------------------------------------------------
@@ -170,7 +111,7 @@ def _impute_mean(g, verbose=False):
         print('    imputed at least 1 sample in {}/{} sites'.format(n, g.shape[0]))
 
 class PlinkReader(object):
-    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, verbose=True, dtype=np.float32):
+    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.float32):
         """
         Class for reading genotypes from PLINK bed files
 
@@ -205,7 +146,14 @@ class PlinkReader(object):
             self.bim = self.bim[m]
             self.bim.reset_index(drop=True, inplace=True)
             self.bim['i'] = self.bim.index
+        if exclude_chrs is not None:
+            m = ~self.bim['chrom'].isin(exclude_chrs).values
+            self.bed = self.bed[m,:]
+            self.bim = self.bim[m]
+            self.bim.reset_index(drop=True, inplace=True)
+            self.bim['i'] = self.bim.index
         self.n_samples = self.fam.shape[0]
+        self.chrs = self.bim['chrom'].unique().tolist()
         self.variant_pos = {i:g['pos'] for i,g in self.bim.set_index('snp')[['chrom', 'pos']].groupby('chrom')}
         self.variant_pos_dict = self.bim.set_index('snp')['pos'].to_dict()
 
@@ -320,31 +268,57 @@ def get_vcf_variants(variant_ids, vcfpath, field='GT', sample_ids=None):
 #  Generator classes for batch processing of genotypes/phenotypes
 #------------------------------------------------------------------------------
 class GenotypeGeneratorTrans(object):
-    def __init__(self, genotypes, batch_size=50000, dtype=np.float32):
+    def __init__(self, genotype_df, batch_size=50000, chr_s=None, dtype=np.float32):
         """
         Generator for iterating over all variants (trans-scan)
-        
+
         Inputs:
           genotypes:  Numpy array of genotypes (variants x samples)
                       (see PlinkReader.get_all_genotypes())
           batch_size: Batch size for GPU processing
           dtype:      Batch dtype (default: np.float32).
                       By default genotypes are stored as np.int8.
+
+        Generates: genotype array (2D), variant ID array
         """
-        self.genotypes = genotypes
+        self.genotype_df = genotype_df
         self.batch_size = batch_size
-        self.num_batches = int(np.ceil(self.genotypes.shape[0] / batch_size))
-        self.genotype_batch_indexes = [[i*batch_size, (i+1)*batch_size] for i in range(self.num_batches)]
+        self.num_batches = int(np.ceil(self.genotype_df.shape[0] / batch_size))
+        self.batch_indexes = [[i*batch_size, (i+1)*batch_size] for i in range(self.num_batches)]
+        self.batch_indexes[-1][1] = self.genotype_df.shape[0]
         self.dtype = dtype
+        if chr_s is not None:
+            chroms, chr_ix = np.unique(chr_s, return_index=True)
+            s = np.argsort(chr_ix)
+            self.chroms = chroms[s]
+            chr_ix = list(chr_ix[s]) + [chr_s.shape[0]]
+            size_s = pd.Series(np.diff(chr_ix), index=self.chroms)
+            self.chr_batch_indexes = {}
+            for k,c in enumerate(self.chroms):
+                num_batches = int(np.ceil(size_s[c] / batch_size))
+                batch_indexes = [[chr_ix[k]+i*batch_size, chr_ix[k]+(i+1)*batch_size] for i in range(num_batches)]
+                batch_indexes[-1][1] = chr_ix[k+1]
+                self.chr_batch_indexes[c] = batch_indexes
+
+    def __len__(self):
+        return self.num_batches
 
     @background(max_prefetch=6)
-    def generate_data(self):
+    def generate_data(self, chrom=None, verbose=False, enum_start=1):
         """Generate batches from genotype data"""
-        for k,i in enumerate(self.genotype_batch_indexes, 1):
-            g = self.genotypes[i[0]:i[1]].astype(self.dtype)
-            if k==self.num_batches:  # pad last batch
-                g = np.r_[g, np.zeros([self.batch_size-g.shape[0], g.shape[1]], dtype=self.dtype)]
-            yield g
+        if chrom is None:
+            batch_indexes = self.batch_indexes
+            num_batches = self.num_batches
+        else:
+            batch_indexes = self.chr_batch_indexes[chrom]
+            num_batches = np.sum([len(i) for i in self.chr_batch_indexes.values()])
+
+        for k,i in enumerate(batch_indexes, enum_start):  # loop through batches
+            if verbose:
+                _print_progress(k, num_batches, 'batch')
+            g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
+            ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
+            yield g, ix
 
 
 class InputGeneratorCis(object):
@@ -359,10 +333,12 @@ class InputGeneratorCis(object):
 
     Generates: phenotype array, genotype array (2D), cis-window indices, phenotype ID
     """
-    def __init__(self, plink_reader, phenotype_df, phenotype_pos_df, genotype_df=None, window=1000000):
+    def __init__(self, genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=1000000):
+        assert (genotype_df.index==variant_df.index).all()
         assert (phenotype_df.index==phenotype_df.index.unique()).all()
-        self.plink_reader = plink_reader
         self.genotype_df = genotype_df
+        self.variant_df = variant_df.copy()
+        self.variant_df['index'] = np.arange(variant_df.shape[0])
         self.n_samples = phenotype_df.shape[1]
         self.phenotype_df = phenotype_df
         self.phenotype_pos_df = phenotype_pos_df
@@ -371,90 +347,80 @@ class InputGeneratorCis(object):
         self.n_phenotypes = phenotype_df.shape[0]
         self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
         self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
-
-        num_var_chr = self.plink_reader.bim['chrom'].value_counts().to_dict()
-        # indices of variants for each chromosome
-        var_index_chr = {c:np.arange(num_var_chr[c]) for c in num_var_chr}
+        self.chrs = phenotype_pos_df['chr'].unique()
+        self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
 
         # check phenotypes & calculate genotype ranges
+        # get genotype indexes corresponding to cis-window of each phenotype
         valid_ix = []
         self.cis_ranges = {}
-
-        chr_size_s = plink_reader.bim['chrom'].value_counts()[plink_reader.bim['chrom'].unique()]
-        if genotype_df is not None:
-            chr_offset_s = pd.Series([0]+chr_size_s.iloc[:-1].tolist(), index=chr_size_s.index).cumsum()
-        else:
-            chr_offset_s = pd.Series(0, index=chr_size_s.index)
-
         for k,phenotype_id in enumerate(phenotype_df.index,1):
-            if np.mod(k,1000)==0:
+            if np.mod(k, 1000) == 0:
                 print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]), end='')
-            # find indices corresponding to cis-window of each gene
+
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
-            r = var_index_chr[chrom][
-                (plink_reader.variant_pos[chrom].values>=tss-self.window) &
-                (plink_reader.variant_pos[chrom].values<=tss+self.window)
-            ] + chr_offset_s[chrom]  # offset is 0 if loading by chr
-            if len(r)>0:
+            # r = self.chr_variant_dfs[chrom]['index'].values[
+            #     (self.chr_variant_dfs[chrom]['pos'].values >= tss - self.window) &
+            #     (self.chr_variant_dfs[chrom]['pos'].values <= tss + self.window)
+            # ]
+            # r = [r[0],r[-1]]
+
+            m = len(self.chr_variant_dfs[chrom]['pos'].values)
+            lb = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
+            ub = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window, side='right')
+            if not ((lb == 0 and ub == 0) or (lb == m and ub == m)):
+                r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
+            else:
+                r = []
+
+            if len(r) > 0:
                 valid_ix.append(phenotype_id)
-                self.cis_ranges[phenotype_id] = [r[0],r[-1]]
+                self.cis_ranges[phenotype_id] = r
         print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]))
         if len(valid_ix)!=phenotype_df.shape[0]:
             print('    ** dropping {} phenotypes without variants in cis-window'.format(
-                phenotype_df.shape[0]-len(valid_ix)))
+                  phenotype_df.shape[0]-len(valid_ix)))
             self.phenotype_df = self.phenotype_df.loc[valid_ix]
             self.n_phenotypes = self.phenotype_df.shape[0]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
             self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
             self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
-        self.phenotype_values = self.phenotype_df.values
-        self.loaded_chrom = ''
 
     @background(max_prefetch=6)
-    def generate_data(self):
-        if self.genotype_df is None:
-            for k,phenotype_id in enumerate(self.phenotype_df.index):
-                chrom = self.phenotype_chr[phenotype_id]
-                if chrom != self.loaded_chrom:
-                    # load genotypes into memory
-                    print('  * loading genotypes')
-                    self.chr_genotypes, self.chr_variant_pos = self.plink_reader.get_region(chrom, verbose=True)
-                    self.loaded_chrom = chrom
-
-                # return phenotype & its permutations in same array; fetch genotypes
-                p = self.phenotype_values[k]
-                r = self.cis_ranges[phenotype_id]
-                yield p, self.chr_genotypes[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
+    def generate_data(self, chrom=None, group_s=None, verbose=False):
+        """
+        
+        Returns: phenotype array, genotype matrix, genotype index, phenotype ID
+        """
+        if chrom is None:
+            phenotype_ids = self.phenotype_df.index
+            chr_offset = 0
         else:
-            for k,phenotype_id in enumerate(self.phenotype_df.index):
-                # return phenotype & its permutations in same array; fetch genotypes
-                p = self.phenotype_values[k]
+            phenotype_ids = self.phenotype_pos_df[self.phenotype_pos_df['chr']==chrom].index
+            offset_dict = {i:j for i,j in zip(*np.unique(self.phenotype_pos_df['chr'], return_index=True))}
+            chr_offset = offset_dict[chrom]
+
+        index_dict = {j:i for i,j in enumerate(self.phenotype_df.index)}
+
+        if group_s is None:
+            for k,phenotype_id in enumerate(phenotype_ids, chr_offset+1):
+                if verbose:
+                    _print_progress(k, self.n_phenotypes, 'phenotype')
+                p = self.phenotype_df.values[index_dict[phenotype_id]]
+                # p = self.phenotype_df.values[k]
                 r = self.cis_ranges[phenotype_id]
                 yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
-
-#------------------------------------------------------------------------------
-#  Functions for parsing tfrecords
-#------------------------------------------------------------------------------
-def parse_tf_vcf_function(example, ix_t=None, key='dosages'):
-    parsed_features = tf.parse_single_example(example, {key: tf.FixedLenFeature(shape=[], dtype=tf.string)})
-    parsed_features = tf.decode_raw(parsed_features[key], tf.float32)
-    if ix_t is not None:
-        parsed_features = tf.gather(parsed_features, ix_t, axis=0)
-    return parsed_features
-
-
-def make_batched_dataset(tfrecord, batch_size=1, ix_t=None, num_parallel_calls=8):
-    dataset = tf.data.TFRecordDataset(tfrecord)
-    dataset = dataset.apply(tf.data.experimental.map_and_batch(
-                            map_func=lambda x: parse_tf_vcf_function(x, ix_t=ix_t),
-                            batch_size=batch_size,
-                            num_parallel_calls=num_parallel_calls))
-    dataset = dataset.prefetch(1)
-    return dataset
-
-
-def pad_up_to(t, target_dims, constant_values=0):
-    s = tf.shape(t)
-    paddings = [[0, m-s[i]] for i,m in enumerate(target_dims)]
-    return tf.pad(t, paddings, 'CONSTANT', constant_values=constant_values)
+        else:
+            group_s = group_s.loc[self.phenotype_df.index].copy()
+            gdf = group_s.groupby(group_s, sort=False)
+            for k,(group_id,g) in enumerate(gdf, chr_offset+1):
+                if verbose:
+                    _print_progress(k, len(gdf), 'phenotype group')
+                # check that ranges are the same for all phenotypes within group
+                assert np.all([self.cis_ranges[g.index[0]][0] == self.cis_ranges[i][0] and self.cis_ranges[g.index[0]][1] == self.cis_ranges[i][1] for i in g.index[1:]])
+                phenotype_ids = g.index.tolist()
+                # p = self.phenotype_df.loc[phenotype_ids].values
+                p = self.phenotype_df.values[[index_dict[i] for i in phenotype_ids]]
+                r = self.cis_ranges[g.index[0]]
+                yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_ids, group_id
