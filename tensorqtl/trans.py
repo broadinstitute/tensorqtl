@@ -26,7 +26,13 @@ def _in_cis(chrom, pos, gene_id, tss_dict, window=1000000):
 
 
 def filter_cis(pval_df, tss_dict, window=1000000):
-    """Filter out cis-QTLs"""
+    """Filter out cis-QTLs (in place).
+
+    Args:
+        pval_df: sparse output from map_trans()
+        tss_dict: gene_id->tss
+        window: filter variants within +/-window of TSS
+    """
     drop_ix = []
     for k,gene_id,variant_id in zip(pval_df['phenotype_id'].index, pval_df['phenotype_id'], pval_df['variant_id']):
         chrom, pos = variant_id.split('_',2)[:2]
@@ -40,7 +46,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
               return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05,
               alleles=2, return_r2=False, batch_size=20000,
               logger=None, verbose=True):
-    """Run trans-QTL mapping from genotypes in memory"""
+    """Run trans-QTL mapping"""
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
