@@ -26,7 +26,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
     r2_nominal_t = r_nominal_t.double().pow(2)
 
     dof = residualizer.dof
-    slope_t = r_nominal_t * std_ratio_t
+    slope_t = r_nominal_t * std_ratio_t.squeeze()
     tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
     slope_se_t = slope_t.abs().double() / tstat_t
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
@@ -54,6 +54,7 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
 
     r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, phenotype_t.reshape(1,-1), residualizer, return_sd=True)
     r_nominal_t = r_nominal_t.squeeze()
+    std_ratio_t = std_ratio_t.squeeze()
     corr_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)  # genotypes x permutations
     r2_perm_t,_ = corr_t[~torch.isnan(corr_t).any(1),:].max(0)
 
@@ -127,7 +128,6 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             if interaction_s is None:
                 res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
                 tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
-                # r = igc.cis_ranges[phenotype_id]
                 variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
                 tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
                 res_df = pd.DataFrame(OrderedDict([
