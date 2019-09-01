@@ -111,7 +111,7 @@ def _impute_mean(g, verbose=False):
         print('    imputed at least 1 sample in {}/{} sites'.format(n, g.shape[0]))
 
 class PlinkReader(object):
-    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.float32):
+    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.int8):
         """
         Class for reading genotypes from PLINK bed files
 
