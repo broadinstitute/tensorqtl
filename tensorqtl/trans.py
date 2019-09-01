@@ -25,21 +25,24 @@ def _in_cis(chrom, pos, gene_id, tss_dict, window=1000000):
         return False
 
 
-def filter_cis(pval_df, tss_dict, window=1000000):
-    """Filter out cis-QTLs (in place).
+def filter_cis(pairs_df, tss_dict, variant_df, window=5000000):
+    """Filter out cis-QTLs
 
     Args:
-        pval_df: sparse output from map_trans()
+        pairs_df: sparse output from map_trans()
         tss_dict: gene_id->tss
         window: filter variants within +/-window of TSS
     """
+    variant_df = variant_df.loc[pairs_df['variant_id'].unique()]
+    variant_dict = {}
+    for variant_id, chrom, pos in zip(variant_df.index, variant_df['chrom'], variant_df['pos']):
+        variant_dict[variant_id] = {'chrom':chrom, 'pos':pos}
+
     drop_ix = []
-    for k,gene_id,variant_id in zip(pval_df['phenotype_id'].index, pval_df['phenotype_id'], pval_df['variant_id']):
-        chrom, pos = variant_id.split('_',2)[:2]
-        pos = int(pos)
-        if _in_cis(chrom, pos, gene_id, tss_dict, window=window):
+    for k,gene_id,variant_id in zip(pairs_df['phenotype_id'].index, pairs_df['phenotype_id'], pairs_df['variant_id']):
+        if _in_cis(variant_dict[variant_id]['chrom'], variant_dict[variant_id]['pos'], gene_id, tss_dict, window=window):
             drop_ix.append(k)
-    return pval_df.drop(drop_ix)
+    return pairs_df.drop(drop_ix)
 
 
 def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,

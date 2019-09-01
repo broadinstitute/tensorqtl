@@ -126,20 +126,20 @@ def main():
             pval_threshold = 1e-5
             logger.write('  * p-value threshold: {:.2g}'.format(pval_threshold))
 
-        pval_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_s,
+        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_s,
                                   return_sparse=return_sparse, pval_threshold=pval_threshold,
                                   maf_threshold=maf_threshold, batch_size=args.batch_size,
                                   return_r2=args.return_r2, logger=logger)
 
         logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
-        pval_df = trans.filter_cis(pval_df, tss_dict, window=5000000)
+        pairs_df = trans.filter_cis(pairs_df, tss_dict, variant_df, window=5000000)
 
         logger.write('  * writing output')
         if not args.output_text:
-            pval_df.to_parquet(os.path.join(args.output_dir, args.prefix+'.trans_qtl_pairs.parquet'))
+            pairs_df.to_parquet(os.path.join(args.output_dir, args.prefix+'.trans_qtl_pairs.parquet'))
         else:
             out_file = os.path.join(args.output_dir, args.prefix+'.trans_qtl_pairs.txt.gz')
-            pval_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
+            pairs_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
 
     logger.write('[{}] Finished mapping'.format(datetime.now().strftime("%b %d %H:%M:%S")))
 
