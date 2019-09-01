@@ -168,8 +168,6 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                     af_t = genotypes_t.sum(1) / (2*ns)
                     maf_t = torch.where(af_t<=0.5, af_t, 1 - af_t)
 
-                    repi0_t = i0_t.repeat(ng, 1)
-
                     # centered inputs
                     g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)
                     gi_t = genotypes_t * interaction_t
@@ -179,7 +177,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                     gi0_t = residualizer.transform(gi0_t, center=False)
 
                     # regression
-                    X_t = torch.stack([g0_t, repi0_t, gi0_t], 2)  # ng x ns x 3
+                    X_t = torch.stack([g0_t, i0_t.repeat(ng, 1), gi0_t], 2)  # ng x ns x 3
                     Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
                     b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), p0_t.t())  # ng x 3 x np
                     dof = residualizer.dof - 2

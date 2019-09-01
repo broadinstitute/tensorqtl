@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 
 sys.path.insert(1, os.path.dirname(__file__))
-import genotypeio, eigenmt, statsfunc
+import genotypeio
 from core import *
 
 
@@ -350,11 +350,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
             # iterate over phenotypes
             buf = []
-            for phenotype in phenotypes:
+            for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                 phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                 res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
-                res[2] = genotype_range[var_ix]
+                res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes.shape[0], phenotype_id])
             res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
             res_df.append(res_s)
