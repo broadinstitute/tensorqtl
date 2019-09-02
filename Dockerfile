@@ -49,10 +49,10 @@ RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite("qvalue")
 # python modules
 RUN pip3 install --upgrade pip setuptools
 RUN pip3 install numpy pandas scipy
-RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow tensorflow-gpu tensorflow-probability rpy2
+RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow torch rpy2
 
 RUN cd /opt && \
-    wget https://github.com/broadinstitute/tensorqtl/archive/868170b6c2a2b16f9308d3555d21a8201be3ca17.tar.gz && \
-    tar -xf 868170b6c2a2b16f9308d3555d21a8201be3ca17.tar.gz && mv tensorqtl-868170b6c2a2b16f9308d3555d21a8201be3ca17 tensorqtl && \
-    rm 868170b6c2a2b16f9308d3555d21a8201be3ca17.tar.gz
+    wget https://github.com/broadinstitute/tensorqtl/archive/d1a146de699704a847ed5508f27e8f2739092732.tar.gz && \
+    tar -xf d1a146de699704a847ed5508f27e8f2739092732.tar.gz && mv tensorqtl-d1a146de699704a847ed5508f27e8f2739092732 tensorqtl && \
+    rm d1a146de699704a847ed5508f27e8f2739092732.tar.gz
 RUN pip3 install -e /opt/tensorqtl/
