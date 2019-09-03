@@ -82,7 +82,7 @@ TensorQTL can also be run as a module to more efficiently run multiple analyses:
 ```
 import pandas as pd
 import tensorqtl
-from tensorqtl import genotypeio
+from tensorqtl import genotypeio, cis, trans
 ```
 #### Loading input files
 Load phenotypes and covariates:
@@ -92,22 +92,21 @@ covariates_df = pd.read_csv(covariates_file, sep='\t', index_col=0).T  # samples
 ```
 Genotypes can be loaded as follows, where `plink_prefix_path` is the path to the VCF in PLINK format:
 ```
-# for VCFs with hard GT calls only, specify type as np.int8 to save memory:
-pr = genotypeio.PlinkReader(plink_prefix_path, dtype=np.int8)
-# load all genotypes into a pd.DataFrame
+pr = genotypeio.PlinkReader(plink_prefix_path)
+# load genotypes and variants into data frames
 genotype_df = pd.DataFrame(pr.get_all_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
+variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
 ```
-To save memory when using genotypes for a subset of samples, specify the samples as follows (this is not strictly necessary, since tensorQTL will select the relevant samples from `genotype_df` otherwise):
+To save memory when using genotypes for a subset of samples, you can specify the samples as follows (this is not strictly necessary, since tensorQTL will select the relevant samples from `genotype_df` otherwise):
 ```
-pr = genotypeio.PlinkReader(plink_prefix_path, select_samples=phenotype_df.columns, dtype=np.int8)
+pr = genotypeio.PlinkReader(plink_prefix_path, select_samples=phenotype_df.columns)
 ```
 #### *cis*-QTL mapping
 ```
-cis_df = tensorqtl.map_cis(pr, phenotype_df, phenotype_pos_df, covariates_df, genotype_df=genotype_df)
-tensorqtl.calculate_qvalues(qtl_df, qvalue_lambda=0.85)
+cis_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df)
+tensorqtl.calculate_qvalues(cis_df, qvalue_lambda=0.85)
 ```
 #### *trans*-QTL mapping
 ```
-trans_df = tensorqtl.map_trans(genotype_df, phenotype_df, covariates_df,
-                               return_sparse=True, batch_size=50000)
+trans_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, return_sparse=True)
 ```
