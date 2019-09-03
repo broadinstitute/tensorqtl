@@ -18,6 +18,7 @@ setup(
     author = 'Francois Aguet (Broad Institute)',
     author_email = 'francois@broadinstitute.org',
     long_description = _LONG_DESCRIPTION,
+    long_description_content_type='text/markdown',
     entry_points = {
         'console_scripts': [
             'tensorqtl = tensorqtl:__main__'
