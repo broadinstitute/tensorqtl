@@ -8,8 +8,11 @@ If you use tensorQTL in your research, please cite the following paper:
 Empirical beta-approximated p-values are computed as described in [FastQTL](http://fastqtl.sourceforge.net/) ([Ongen et al., 2016](https://academic.oup.com/bioinformatics/article/32/10/1479/1742545)).
 
 ### Install
-
-Run the following commands to install tensorQTL:
+You can install tensorQTL using pip:
+```
+pip3 install tensorqtl
+```
+or directly from this repository:
 ```
 $ git clone git@github.com:broadinstitute/tensorqtl.git
 $ cd tensorqtl
@@ -18,7 +21,6 @@ $ virtualenv venv
 $ source venv/bin/activate
 (venv)$ pip install -r install/requirements.txt .
 ```
-<!-- `pip install tensorqtl` -->
 
 ### Requirements
 
