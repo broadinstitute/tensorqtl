@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 
 sys.path.insert(1, os.path.dirname(__file__))
-import genotypeio
+import genotypeio, eigenmt
 from core import *
 
 
@@ -66,7 +66,8 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
                 interaction_s=None, maf_threshold_interaction=0.05,
-                group_s=None, window=1000000, output_dir='.', logger=None, verbose=True):
+                group_s=None, window=1000000, run_eigenmt=False,
+                output_dir='.', logger=None, verbose=True):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -147,7 +148,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                 if genotypes_t.shape[0]>0:
                     res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
                                                         return_sparse=False)
-                    # m_eff = eigenmt.fit(genotypes_t)  # compute eigenMT correction
+
+                    if run_eigenmt:  # compute eigenMT correction
+                        m_eff = eigenmt.compute_tests(genotypes_t, var_thresh=0.99, variant_window=200)
 
                     tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     mask = mask_t.cpu().numpy()
@@ -177,7 +180,8 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                     ]))
 
                     top_s = res_df.loc[res_df['pval_gi'].abs().idxmax()].copy()
-                    # top_s['tests_emt'] = m_eff
+                    if run_eigenmt:
+                        top_s['tests_emt'] = m_eff
 
                     best_assoc.append(top_s)  # top variant only (pval_gi is t-statistic here, hence max)
                 else:  # all genotypes in window were filtered out
@@ -214,8 +218,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
         best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
         best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
         best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), dof)
-        # best_assoc['pval_emt'] = np.minimum(best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
-        # best_assoc['pval_adj_bh'] = statsfunc.padjust_bh(best_assoc['pval_emt'])
+        if run_eigenmt:
+            best_assoc['pval_emt'] = np.minimum(best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
+            best_assoc['pval_adj_bh'] = eigenmt.padjust_bh(best_assoc['pval_emt'])
         best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
                           sep='\t', float_format='%.6g')
     logger.write('done.')
