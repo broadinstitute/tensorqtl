@@ -1,6 +1,12 @@
 import numpy as np
 import scipy.stats as stats
 import subprocess
+import sys
+import os
+
+sys.path.insert(1, os.path.dirname(__file__))
+from core import SimpleLogger
+
 
 has_rpy2 = False
 e = subprocess.call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -15,29 +21,31 @@ if not has_rpy2:
     print("Warning: 'rfunc' cannot be imported. R and the 'rpy2' Python package are needed.")
 
 
-def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None):
+def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     """Annotate permutation results with q-values, p-value threshold"""
+    if logger is None:
+        logger = SimpleLogger()
 
-    print('Computing q-values')
-    print('  * Number of phenotypes tested: {}'.format(res_df.shape[0]))
-    print('  * Correlation between Beta-approximated and empirical p-values: : {:.4f}'.format(
+    logger.write('Computing q-values')
+    logger.write('  * Number of phenotypes tested: {}'.format(res_df.shape[0]))
+    logger.write('  * Correlation between Beta-approximated and empirical p-values: : {:.4f}'.format(
         stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]))
 
     # calculate q-values
     if qvalue_lambda is None:
         qval, pi0 = rfunc.qvalue(res_df['pval_beta'])
     else:
-        print('  * Calculating q-values with lambda = {:.3f}'.format(qvalue_lambda))
+        logger.write('  * Calculating q-values with lambda = {:.3f}'.format(qvalue_lambda))
         qval, pi0 = rfunc.qvalue(res_df['pval_beta'], qvalue_lambda)
     res_df['qval'] = qval
-    print('  * Proportion of significant phenotypes (1-pi0): {:.2f}'.format(1 - pi0))
-    print('  * QTL phenotypes @ FDR {:.2f}: {}'.format(fdr, np.sum(res_df['qval']<=fdr)))
+    logger.write('  * Proportion of significant phenotypes (1-pi0): {:.2f}'.format(1 - pi0))
+    logger.write('  * QTL phenotypes @ FDR {:.2f}: {}'.format(fdr, np.sum(res_df['qval']<=fdr)))
 
     # determine global min(p) significance threshold and calculate nominal p-value threshold for each gene
     ub = res_df.loc[res_df['qval']>fdr, 'pval_beta'].sort_values()[0]
     lb = res_df.loc[res_df['qval']<=fdr, 'pval_beta'].sort_values()[-1]
     pthreshold = (lb+ub)/2
-    print('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
+    logger.write('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
     res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
