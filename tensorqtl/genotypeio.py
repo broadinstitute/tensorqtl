@@ -379,7 +379,7 @@ class InputGeneratorCis(object):
             m = len(self.chr_variant_dfs[chrom]['pos'].values)
             lb = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
             ub = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window, side='right')
-            if not ((lb == 0 and ub == 0) or (lb == m and ub == m)):
+            if lb != ub:
                 r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
             else:
                 r = []
