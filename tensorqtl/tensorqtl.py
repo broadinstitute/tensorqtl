@@ -47,6 +47,11 @@ def main():
 
     logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.{}.log'.format(args.mode)))
     logger.write('[{}] Running TensorQTL: {}-QTL mapping'.format(datetime.now().strftime("%b %d %H:%M:%S"), args.mode.split('_')[0]))
+    if torch.cuda.is_available():
+        logger.write('  * using GPU ({})'.format(torch.cuda.get_device_name(torch.cuda.current_device())))
+    else:
+        logger.write('  * WARNING: using CPU!')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.seed is not None:
         logger.write('  * using seed {}'.format(args.seed))
 
