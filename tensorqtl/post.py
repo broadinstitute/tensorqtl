@@ -9,6 +9,7 @@ from datetime import datetime
 
 sys.path.insert(1, os.path.dirname(__file__))
 from core import SimpleLogger
+import trans
 
 
 has_rpy2 = False
@@ -50,6 +51,16 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     pthreshold = (lb+ub)/2
     logger.write('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
     res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
+
+
+def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, lambda_qvalue=None):
+    """"""
+    pval_df = trans.map_trans(genotype_df.loc[res_df['variant_id'].unique()],
+                              phenotype_df.loc[res_df.index.unique()], covariates_df,
+                              return_sparse=False, maf_threshold=0)
+    rep_pval = pval_df.lookup(res_df['variant_id'], res_df.index)
+    pi1 = 1 - rfunc.pi0est(rep_pval, lambda_qvalue=lambda_qvalue)[0]
+    return pi1, rep_pval
 
 
 def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
