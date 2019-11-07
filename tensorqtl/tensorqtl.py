@@ -22,7 +22,7 @@ def main():
     parser.add_argument('prefix', help='Prefix for output file names')
     parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'trans'], help='Mapping mode. Default: cis')
     parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
-    parser.add_argument('--permutations', default=10000, help='Number of permutations. Default: 10000')
+    parser.add_argument('--permutations', type=int, default=10000, help='Number of permutations. Default: 10000')
     parser.add_argument('--interaction', default=None, type=str, help='Interaction term')
     parser.add_argument('--cis_output', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
     parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
