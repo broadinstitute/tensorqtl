@@ -44,7 +44,7 @@ RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD5
 RUN add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran35/'
 RUN apt update && apt install -y r-base r-base-dev
 ENV R_LIBS_USER=/opt/R/3.6
-RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite("qvalue");'
+RUN Rscript -e 'if (!requireNamespace("BiocManager", quietly = TRUE)) {install.packages("BiocManager")}; BiocManager::install("qvalue");'
 
 # python modules
 RUN pip3 install --upgrade pip setuptools
@@ -52,7 +52,10 @@ RUN pip3 install numpy pandas scipy
 RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow torch rpy2 gcsfs
 
 RUN cd /opt && \
-    wget https://github.com/broadinstitute/tensorqtl/archive/v1.0.0.tar.gz && \
-    tar -xf v1.0.0.tar.gz && mv tensorqtl-1.0.0 tensorqtl && \
-    rm v1.0.0.tar.gz
+    # wget https://github.com/broadinstitute/tensorqtl/archive/v1.0.2.tar.gz && \
+    # tar -xf v1.0.2.tar.gz && mv tensorqtl-1.0.2 tensorqtl && \
+    # rm v1.0.2.tar.gz
+    wget https://github.com/broadinstitute/tensorqtl/archive/d739c40c41fb0d3dcb68047e98029c2cf74f9134.tar.gz && \
+    tar -xf d739c40c41fb0d3dcb68047e98029c2cf74f9134.tar.gz && mv tensorqtl-d739c40c41fb0d3dcb68047e98029c2cf74f9134 tensorqtl && \
+    rm d739c40c41fb0d3dcb68047e98029c2cf74f9134.tar.gz
 RUN pip3 install -e /opt/tensorqtl/
