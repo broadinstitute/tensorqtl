@@ -108,7 +108,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             if return_sparse:
                 m = r2_t >= r2_threshold
                 r2_t = r2_t.masked_select(m)
-                ix = m.nonzero().cpu()  # sparse index
+                ix = m.nonzero().cpu().numpy()  # sparse index
                 r2_t = r2_t.type(torch.float64)
                 tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
                 if not return_r2:
