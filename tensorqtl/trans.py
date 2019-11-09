@@ -118,7 +118,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             else:
                 r2_t = r2_t.type(torch.float64)
                 tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
-                res.append(tstat.cpu())
+                res.append(np.c_[variant_ids, tstat.cpu()])
         logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
         del phenotypes_t
         del residualizer
@@ -136,8 +136,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             if return_r2:
                 pval_df['r2'] = pval_df['r2'].astype(np.float32)
         else:
-            pval = 2*stats.t.cdf(-np.abs(res.astype(np.float64)), dof)
-            pval_df = pd.DataFrame(pval, index=variant_ids, columns=phenotype_df.index)
+            pval = 2*stats.t.cdf(-np.abs(res[:,1:].astype(np.float64)), dof)
+            pval_df = pd.DataFrame(pval, index=res[:,0], columns=phenotype_df.index)
             pval_df.index.name = 'variant_id'
 
         logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
