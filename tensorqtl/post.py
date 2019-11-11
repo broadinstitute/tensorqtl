@@ -53,12 +53,17 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
-def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, lambda_qvalue=None):
+def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, interaction_s=None, lambda_qvalue=None):
     """"""
     pval_df = trans.map_trans(genotype_df.loc[res_df['variant_id'].unique()],
                               phenotype_df.loc[res_df.index.unique()], covariates_df,
-                              return_sparse=False, maf_threshold=0)
-    rep_pval = pval_df.lookup(res_df['variant_id'], res_df.index)
+                              interaction_s=interaction_s, return_sparse=False, maf_threshold=0)
+
+    if interaction_s is None:
+        rep_pval = pval_df.lookup(res_df['variant_id'], res_df.index)
+    else:
+        pval_g_df, pval_i_df, pval_gi_df, maf_s, ma_samples_s, ma_count_s = pval_df
+        rep_pval = pval_gi_df.lookup(res_df['variant_id'], res_df.index)
     pi1 = 1 - rfunc.pi0est(rep_pval, lambda_qvalue=lambda_qvalue)[0]
     return pi1, rep_pval
 
