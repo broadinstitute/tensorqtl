@@ -322,6 +322,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     n_samples = phenotype_df.shape[1]
     ix = np.arange(n_samples)
     if seed is not None:
+        logger.write('  * using seed {}'.format(seed))
         np.random.seed(seed)
     permutation_ix_t = torch.LongTensor(np.array([np.random.permutation(ix) for i in range(nperm)])).to(device)
 
@@ -425,6 +426,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     n_samples = phenotype_df.shape[1]
     ix = np.arange(n_samples)
     if seed is not None:
+        logger.write('  * using seed {}'.format(seed))
         np.random.seed(seed)
     permutation_ix_t = torch.LongTensor(np.array([np.random.permutation(ix) for i in range(nperm)])).to(device)
 
