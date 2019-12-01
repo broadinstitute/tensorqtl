@@ -276,7 +276,7 @@ def read_phenotype_bed(phenotype_bed):
         phenotype_df = pd.read_parquet(phenotype_bed)
     else:
         raise ValueError('Unsupported file type.')
-    phenotype_df = phenotype_df.rename(columns={i:i.lower() for i in phenotype_df.columns[:3]})
+    phenotype_df.rename(columns={i:i.lower() for i in phenotype_df.columns[:3]}, inplace=True)
     phenotype_pos_df = phenotype_df[['#chr', 'end']].rename(columns={'#chr':'chr', 'end':'tss'})
-    phenotype_df = phenotype_df.drop(['#chr', 'start', 'end'], axis=1)
+    phenotype_df.drop(['#chr', 'start', 'end'], axis=1, inplace=True)
     return phenotype_df, phenotype_pos_df

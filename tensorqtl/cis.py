@@ -28,7 +28,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
     dof = residualizer.dof
     slope_t = r_nominal_t * std_ratio_t.squeeze()
     tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
-    slope_se_t = slope_t.abs().double() / tstat_t
+    slope_se_t = (slope_t.abs().double() / tstat_t).float()
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
 
@@ -382,6 +382,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     assert np.all(phenotype_df.index==phenotype_pos_df.index)
+    assert np.all(covariates_df.index==phenotype_df.columns)
     if logger is None:
         logger = SimpleLogger()
 

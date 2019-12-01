@@ -102,6 +102,8 @@ def _get_field_ix(line, field):
 #------------------------------------------------------------------------------
 def _impute_mean(g, verbose=False):
     """Impute rows to mean (in place)"""
+    if not g.dtype in [np.float32, np.float64]:
+        raise ValueError('Input dtype must be np.float32 or np.float64')
     n = 0
     for i in np.where((g==-1).any(1))[0]:
         ix = g[i]==-1
@@ -172,7 +174,7 @@ class PlinkReader(object):
         else:
             return c['i'].values
 
-    def get_region(self, region_str, sample_ids=None, impute=True, verbose=False, dtype=np.float32):
+    def get_region(self, region_str, sample_ids=None, impute=False, verbose=False, dtype=np.int8):
         """Get genotypes for a region defined by 'chr:start-end' or 'chr'"""
         ix, pos_s = self.get_region_index(region_str, return_pos=True)
         g = self.bed[ix, :].compute().astype(dtype)
@@ -183,7 +185,7 @@ class PlinkReader(object):
             _impute_mean(g, verbose=verbose)
         return g, pos_s
 
-    def get_genotypes(self, variant_ids, sample_ids=None, impute=False, verbose=False, dtype=np.float32):
+    def get_genotypes(self, variant_ids, sample_ids=None, impute=False, verbose=False, dtype=np.int8):
         """Load genotypes corresponding to variant IDs"""
         c = self.bim[self.bim['snp'].isin(variant_ids)]
         g = self.bed[c.i.values, :].compute().astype(dtype)
@@ -194,20 +196,17 @@ class PlinkReader(object):
             _impute_mean(g, verbose=verbose)
         return g, c.set_index('snp')['pos']
 
-    def get_genotype(self, variant_id, sample_ids=None, impute=False, verbose=False, dtype=np.float32):
-        """Load genotype corresponding to variant ID as pd.Series"""
+    def get_genotype(self, variant_id, sample_ids=None, impute=False, verbose=False, dtype=np.int8):
+        """Load genotypes for a single variant ID as pd.Series"""
         g,_ = self.get_genotypes([variant_id], sample_ids=sample_ids, impute=impute, verbose=verbose, dtype=dtype)
         if sample_ids is None:
             return pd.Series(g[0], index=self.fam['iid'], name=variant_id)
         else:
             return pd.Series(g[0], index=sample_ids, name=variant_id)
 
-    def get_all_genotypes(self, impute=False, verbose=False):
-        """Load all genotypes into memory (impute=True should only be used for float formats)"""
-        g = self.bed.compute()
-        if impute:
-            _impute_mean(g, verbose=verbose)
-        return g
+    def load_genotypes(self):
+        """Load all genotypes into memory, as pd.DataFrame"""
+        return pd.DataFrame(self.bed.compute(), index=self.bim['snp'], columns=self.fam['iid'])
 
 
 def load_genotypes(plink_prefix_path, select_samples=None, dtype=np.int8):
