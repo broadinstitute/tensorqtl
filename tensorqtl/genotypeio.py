@@ -342,7 +342,7 @@ class InputGeneratorCis(object):
 
     Generates: phenotype array, genotype array (2D), cis-window indices, phenotype ID
     """
-    def __init__(self, genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=1000000):
+    def __init__(self, genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=None, window=1000000):
         assert (genotype_df.index==variant_df.index).all()
         assert (phenotype_df.index==phenotype_df.index.unique()).all()
         self.genotype_df = genotype_df
@@ -351,6 +351,7 @@ class InputGeneratorCis(object):
         self.n_samples = phenotype_df.shape[1]
         self.phenotype_df = phenotype_df
         self.phenotype_pos_df = phenotype_pos_df
+        self.group_s = None
         self.window = window
 
         self.n_phenotypes = phenotype_df.shape[0]
@@ -395,24 +396,32 @@ class InputGeneratorCis(object):
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
             self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
             self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
+        if group_s is not None:
+            self.group_s = group_s.loc[self.phenotype_df.index].copy()
+            self.n_groups = self.group_s.unique().shape[0]
+
 
     @background(max_prefetch=6)
-    def generate_data(self, chrom=None, group_s=None, verbose=False):
+    def generate_data(self, chrom=None, verbose=False):
         """
-        
-        Returns: phenotype array, genotype matrix, genotype index, phenotype ID
+        Generate batches from genotype data
+
+        Returns: phenotype array, genotype matrix, genotype index, phenotype ID(s), [group ID]
         """
         if chrom is None:
             phenotype_ids = self.phenotype_df.index
             chr_offset = 0
         else:
             phenotype_ids = self.phenotype_pos_df[self.phenotype_pos_df['chr']==chrom].index
-            offset_dict = {i:j for i,j in zip(*np.unique(self.phenotype_pos_df['chr'], return_index=True))}
+            if self.group_s is None:
+                offset_dict = {i:j for i,j in zip(*np.unique(self.phenotype_pos_df['chr'], return_index=True))}
+            else:
+                offset_dict = {i:j for i,j in zip(*np.unique(self.phenotype_pos_df['chr'][self.group_s.drop_duplicates().index], return_index=True))}
             chr_offset = offset_dict[chrom]
 
         index_dict = {j:i for i,j in enumerate(self.phenotype_df.index)}
 
-        if group_s is None:
+        if self.group_s is None:
             for k,phenotype_id in enumerate(phenotype_ids, chr_offset+1):
                 if verbose:
                     _print_progress(k, self.n_phenotypes, 'phenotype')
@@ -421,15 +430,14 @@ class InputGeneratorCis(object):
                 r = self.cis_ranges[phenotype_id]
                 yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
         else:
-            group_s = group_s.loc[self.phenotype_df.index].copy()
-            gdf = group_s.groupby(group_s, sort=False)
+            gdf = self.group_s[phenotype_ids].groupby(self.group_s, sort=False)
             for k,(group_id,g) in enumerate(gdf, chr_offset+1):
                 if verbose:
-                    _print_progress(k, len(gdf), 'phenotype group')
+                    _print_progress(k, self.n_groups, 'phenotype group')
                 # check that ranges are the same for all phenotypes within group
                 assert np.all([self.cis_ranges[g.index[0]][0] == self.cis_ranges[i][0] and self.cis_ranges[g.index[0]][1] == self.cis_ranges[i][1] for i in g.index[1:]])
-                phenotype_ids = g.index.tolist()
-                # p = self.phenotype_df.loc[phenotype_ids].values
-                p = self.phenotype_df.values[[index_dict[i] for i in phenotype_ids]]
+                group_phenotype_ids = g.index.tolist()
+                # p = self.phenotype_df.loc[group_phenotype_ids].values
+                p = self.phenotype_df.values[[index_dict[i] for i in group_phenotype_ids]]
                 r = self.cis_ranges[g.index[0]]
-                yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_ids, group_id
+                yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), group_phenotype_ids, group_id
