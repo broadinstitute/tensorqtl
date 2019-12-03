@@ -140,7 +140,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             pval_df = pd.DataFrame(pval, index=res[:,0], columns=phenotype_df.index)
             pval_df.index.name = 'variant_id'
 
-        logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+        if maf_threshold > 0:
+            logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
         logger.write('done.')
         return pval_df
 
@@ -334,7 +335,8 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
                 max_r2_t = torch.max(m, max_r2_t)
             chr_max_r2[chrom] = max_r2_t.cpu()
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-        logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+        if maf_threshold > 0:
+            logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
         chr_max_r2 = pd.DataFrame(chr_max_r2)
 
         # leave-one-out max
@@ -377,7 +379,8 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
             m,_ = r2_t.max(0)
             max_r2_t = torch.max(m, max_r2_t)
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
-        logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+        if maf_threshold > 0:
+            logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
         max_r2 = max_r2_t.cpu().numpy().astype(np.float64)
         tstat = np.sqrt( dof*max_r2 / (1-max_r2) )
         minp_empirical = 2*stats.t.cdf(-np.abs(tstat), dof)

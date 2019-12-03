@@ -70,10 +70,11 @@ def calculate_maf(genotype_t, alleles=2):
 def filter_maf(genotypes_t, variant_ids, maf_threshold):
     """Calculate MAF and filter genotypes that don't pass threshold"""
     maf_t = calculate_maf(genotypes_t)
-    mask_t = maf_t >= maf_threshold
-    genotypes_t = genotypes_t[mask_t]
-    variant_ids = variant_ids[mask_t.cpu().numpy().astype(bool)]
-    maf_t = maf_t[mask_t]
+    if maf_threshold > 0:
+        mask_t = maf_t >= maf_threshold
+        genotypes_t = genotypes_t[mask_t]
+        variant_ids = variant_ids[mask_t.cpu().numpy().astype(bool)]
+        maf_t = maf_t[mask_t]
     return genotypes_t, variant_ids, maf_t
 
 
