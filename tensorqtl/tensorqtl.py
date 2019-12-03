@@ -35,6 +35,7 @@ def main():
     parser.add_argument('--best_only', action='store_true', help='Produce output only for the top association/phenotype')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=20000, help='Batch size. Reduce this if encountering OOM errors.')
+    parser.add_argument('--load_split', action='store_true', help='Load genotypes into memory separately for each chromosome.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
     parser.add_argument('--qvalue_lambda', default=None, type=np.float64, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('--seed', default=None, type=int, help='Seed for permutations.')
@@ -97,9 +98,9 @@ def main():
 
     # load genotypes
     pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
-    genotype_df = pd.DataFrame(pr.get_all_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
-    chr_s = pr.bim['chrom']
+    if args.mode != 'cis_nominal' or not args.load_split:  # load all genotypes into memory
+        genotype_df = pd.DataFrame(pr.load_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
 
     if args.mode.startswith('cis'):
         if args.mode=='cis':
@@ -112,9 +113,21 @@ def main():
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', float_format='%.6g')
         elif args.mode=='cis_nominal':
-            cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
-                            interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                            group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
+            if not args.load_split:
+                cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
+                                interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
+                                group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
+            else:  # load genotypes for each chromosome separately
+                for chrom in pr.chrs:
+                    g, pos_s = pr.get_region(chrom)
+                    genotype_df = pd.DataFrame(g, index=pos_s.index, columns=pr.fam['iid'])[phenotype_df.columns]
+                    variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
+                    cis.map_nominal(genotype_df, variant_df[variant_df['chrom']==chrom],
+                                    phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
+                                    covariates_df, args.prefix,
+                                    interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
+                                    group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
+
         elif args.mode=='cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
