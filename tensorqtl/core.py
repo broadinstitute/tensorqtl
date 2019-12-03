@@ -81,8 +81,8 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
     # filter monomorphic sites (to avoid colinearity)
     mask_t = ~((genotypes_t==0).all(1) | (genotypes_t==1).all(1) | (genotypes_t==2).all(1))
     if interaction_mask_t is not None:
-        upper_t = calculate_maf(genotypes_t[:,interaction_mask_t]) >= maf_threshold_interaction
-        lower_t = calculate_maf(genotypes_t[:,~interaction_mask_t]) >= maf_threshold_interaction
+        upper_t = calculate_maf(genotypes_t[:, interaction_mask_t]) >= maf_threshold_interaction - 1e-7
+        lower_t = calculate_maf(genotypes_t[:,~interaction_mask_t]) >= maf_threshold_interaction - 1e-7
         mask_t = mask_t & upper_t & lower_t
     genotypes_t = genotypes_t[mask_t]
     return genotypes_t, mask_t
@@ -193,7 +193,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         a = m.sum(1).int()
         b = (genotypes_t < 1.5).sum(1).int()
         ma_samples_t = torch.where(ix_t, a, b)
-        a = (genotypes_t * m.float()).sum(1).int()
+        a = (genotypes_t * m.float()).sum(1).round().int()  # round for missing/imputed genotypes
         ma_count_t = torch.where(ix_t, a, n2-a)
         return tstat_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t
 
