@@ -312,7 +312,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
         # convert to dataframe, compute p-values and write current chromosome
-        if start < chr_res['maf']:
+        if start < len(chr_res['maf']):
             for x in chr_res:
                 chr_res[x] = chr_res[x][:start]
 
