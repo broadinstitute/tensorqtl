@@ -550,7 +550,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     permutation_ix_t = torch.LongTensor(np.array([np.random.permutation(ix) for i in range(nperm)])).to(device)
 
     res_df = []
-    igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=window)
+    igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=group_s, window=window)
     logger.write('  * computing independent QTLs')
     start_time = time.time()
     if group_s is None:
@@ -625,7 +625,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 res_df.append(forward_df)
 
     else:  # grouped phenotypes
-        for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(group_s=group_s, verbose=verbose), 1):
+        for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(verbose=verbose), 1):
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
