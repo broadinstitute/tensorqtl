@@ -124,7 +124,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                 j = igc.cis_ranges[i]
                 n += j[1] - j[0] + 1
         else:
-            for i in group_s[igc.phenotype_pos_df['chr']==chrom].drop_duplicates().index:
+            for i in igc.group_s[igc.phenotype_pos_df['chr']==chrom].drop_duplicates().index:
                 j = igc.cis_ranges[i]
                 n += j[1] - j[0] + 1
 
