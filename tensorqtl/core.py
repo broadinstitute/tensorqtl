@@ -150,7 +150,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     i0_t = residualizer.transform(i0_t, center=False)
     i0_t = i0_t.repeat(ng, 1)
 
-    # regression
+    # regression (in float; loss of precision may occur in edge cases)
     X_t = torch.stack([g0_t, i0_t, gi0_t], 2)  # ng x ns x 3
     Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
     # Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))  # ng x 3 x 3

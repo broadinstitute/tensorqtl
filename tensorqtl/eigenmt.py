@@ -172,6 +172,8 @@ def run_eigenmt(genotype_df, variant_df, phenotype_df, phenotype_pos_df, interac
 
 def padjust_bh(p):
     """Benjamini-Hochberg adjusted p-values"""
+    if not np.all(np.isfinite(p)):
+        raise ValueError('P values must be finite.')
     n = len(p)
     i = np.arange(n,0,-1)
     o = np.argsort(p)[::-1]

@@ -179,7 +179,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                         n = len(variant_ids)
 
                         # top association
-                        ix = np.argmax(np.abs(tstat[:,2]))
+                        ix = np.nanargmax(np.abs(tstat[:,2]))
                         top_s = pd.Series([phenotype_id, variant_ids[ix], tss_distance[ix], maf[ix], ma_samples[ix], ma_count[ix],
                                            tstat[ix,0], b[ix,0], b_se[ix,0],
                                            tstat[ix,1], b[ix,1], b_se[ix,1],
@@ -297,7 +297,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
 
                     # top association for the group
                     if interaction_s is not None:
-                        ix = np.argmax(np.abs(tstat[:,2]))
+                        ix = np.nanargmax(np.abs(tstat[:,2]))
                         top_s = pd.Series([chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix], tss_distance[ix], maf[ix], ma_samples[ix], ma_count[ix],
                                            tstat[ix,0], b[ix,0], b_se[ix,0],
                                            tstat[ix,1], b[ix,1], b_se[ix,1],
