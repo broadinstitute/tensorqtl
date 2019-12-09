@@ -277,7 +277,7 @@ def get_vcf_variants(variant_ids, vcfpath, field='GT', sample_ids=None):
 #  Generator classes for batch processing of genotypes/phenotypes
 #------------------------------------------------------------------------------
 class GenotypeGeneratorTrans(object):
-    def __init__(self, genotype_df, batch_size=50000, chr_s=None, dtype=np.float32):
+    def __init__(self, genotype_df, batch_size=50000, chr_s=None):
         """
         Generator for iterating over all variants (trans-scan)
 
@@ -285,8 +285,6 @@ class GenotypeGeneratorTrans(object):
           genotypes:  Numpy array of genotypes (variants x samples)
                       (see PlinkReader.get_all_genotypes())
           batch_size: Batch size for GPU processing
-          dtype:      Batch dtype (default: np.float32).
-                      By default genotypes are stored as np.int8.
 
         Generates: genotype array (2D), variant ID array
         """
@@ -295,7 +293,6 @@ class GenotypeGeneratorTrans(object):
         self.num_batches = int(np.ceil(self.genotype_df.shape[0] / batch_size))
         self.batch_indexes = [[i*batch_size, (i+1)*batch_size] for i in range(self.num_batches)]
         self.batch_indexes[-1][1] = self.genotype_df.shape[0]
-        self.dtype = dtype
         if chr_s is not None:
             chroms, chr_ix = np.unique(chr_s, return_index=True)
             s = np.argsort(chr_ix)
@@ -325,7 +322,7 @@ class GenotypeGeneratorTrans(object):
         for k,i in enumerate(batch_indexes, enum_start):  # loop through batches
             if verbose:
                 _print_progress(k, num_batches, 'batch')
-            g = self.genotype_df.values[i[0]:i[1]].astype(self.dtype)
+            g = self.genotype_df.values[i[0]:i[1]]
             ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
             yield g, ix
 

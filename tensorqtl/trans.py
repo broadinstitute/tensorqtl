@@ -88,17 +88,19 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         r2_threshold = None
 
     if interaction_s is None:
-        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.int8)
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size)
         start_time = time.time()
         res = []
         n_variants = 0
         for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-            # TODO: add imputation?
 
             # filter by MAF
             genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
+            # genotypes_t = genotypes_t[:,genotype_ix_t]
+            # impute_mean(genotypes_t)
+            # genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
 
             r2_t = calculate_corr(genotypes_t, phenotypes_t, residualizer).pow(2)
@@ -150,7 +152,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
 
-        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.float32)
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size)
         start_time = time.time()
         if return_sparse:
 
@@ -318,7 +320,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
     if chr_s is not None:
         start_time = time.time()
         n_variants = 0
-        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, chr_s=chr_s, dtype=np.float32)
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, chr_s=chr_s)
         total_batches = np.sum([len(ggt.chr_batch_indexes[c]) for c in ggt.chroms])
 
         chr_max_r2 = OrderedDict()
@@ -366,7 +368,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         return beta_df
 
     else:  # not split_chr
-        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, dtype=np.float32)
+        ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size)
         start_time = time.time()
         max_r2_t = torch.FloatTensor(nperms).fill_(0).to(device)
         n_variants = 0
