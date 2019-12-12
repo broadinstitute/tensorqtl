@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import torch
 import scipy.stats as stats
 import subprocess
 import sys
@@ -8,8 +9,7 @@ import glob
 from datetime import datetime
 
 sys.path.insert(1, os.path.dirname(__file__))
-from core import SimpleLogger
-import trans
+from core import SimpleLogger, Residualizer, center_normalize, impute_mean
 
 
 has_rpy2 = False
@@ -53,22 +53,71 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
-def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, interaction_s=None, lambda_qvalue=None):
+def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, interaction_s=None,
+                          lambda_qvalue=None):
     """res_df: DataFrame with 'variant_id' column and phenotype IDs as index"""
-    pval_df = trans.map_trans(genotype_df.loc[res_df['variant_id'].unique()],
-                              phenotype_df.loc[res_df.index.unique()], covariates_df,
-                              interaction_s=interaction_s, return_sparse=False, maf_threshold=0)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    genotypes_t = torch.tensor(genotype_df.loc[res_df['variant_id']].values, dtype=torch.float).to(device)
+    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
+    genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
+    genotypes_t = genotypes_t[:,genotype_ix_t]
+    impute_mean(genotypes_t)
+
+    phenotypes_t = torch.tensor(phenotype_df.loc[res_df.index].values, dtype=torch.float32).to(device)
+
+    residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
 
     if interaction_s is None:
-        rep_pval = pval_df.lookup(res_df['variant_id'], res_df.index)
+        genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
+        phenotype_res_t = residualizer.transform(phenotypes_t)  # phenotypes x samples
+
+        # center and normalize
+        genotype_res_t = center_normalize(genotype_res_t, dim=1)
+        phenotype_res_t = center_normalize(phenotype_res_t, dim=1)
+
+        r_nominal_t = (genotype_res_t * phenotype_res_t).sum(1)
+        r2_nominal_t = r_nominal_t.double().pow(2)
+
+        dof = residualizer.dof
+        tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
+
+        pval = 2*stats.t.cdf(-np.abs(tstat_t.cpu()), dof)
     else:
-        pval_g_df, pval_i_df, pval_gi_df, maf_s, ma_samples_s, ma_count_s = pval_df
-        rep_pval = pval_gi_df.lookup(res_df['variant_id'], res_df.index)
+        interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
+        ng, ns = genotypes_t.shape
+        nps = phenotypes_t.shape[0]
+
+        # centered inputs
+        g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)
+        gi_t = genotypes_t * interaction_t
+        gi0_t = gi_t - gi_t.mean(1, keepdim=True)
+        i0_t = interaction_t - interaction_t.mean()
+        p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)
+
+        # residualize rows
+        g0_t = residualizer.transform(g0_t, center=False)
+        gi0_t = residualizer.transform(gi0_t, center=False)
+        p0_t = residualizer.transform(p0_t, center=False)  # np x ns
+        i0_t = residualizer.transform(i0_t, center=False)
+        i0_t = i0_t.repeat(ng, 1)
+
+        # regression (in float; loss of precision may occur in edge cases)
+        X_t = torch.stack([g0_t, i0_t, gi0_t], 2)  # ng x ns x 3
+        Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
+        b_t = (torch.matmul(Xinv, torch.transpose(X_t, 1, 2)) * p0_t.unsqueeze(1)).sum(2) # ng x 3
+        r_t = (X_t * b_t.unsqueeze(1)).sum(2) - p0_t
+        dof = residualizer.dof - 2
+        rss_t = (r_t*r_t).sum(1)  # ng x np
+        b_se_t = torch.sqrt( Xinv[:, torch.eye(3, dtype=torch.uint8).bool()] * rss_t.unsqueeze(-1) / dof )
+        tstat_t = (b_t.double() / b_se_t.double()).float()
+        pval = 2*stats.t.cdf(-np.abs(tstat_t[:,2].cpu()), dof)
+
     try:
-        pi1 = 1 - rfunc.pi0est(rep_pval, lambda_qvalue=lambda_qvalue)[0]
+        pi1 = 1 - rfunc.pi0est(pval, lambda_qvalue=lambda_qvalue)[0]
     except:
         pi1 = np.NaN
-    return pi1, rep_pval
+    return pi1, pval
 
 
 def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
