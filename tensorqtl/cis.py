@@ -67,12 +67,16 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
                 interaction_s=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
-                output_dir='.', logger=None, verbose=True):
+                output_dir='.', write_top=True, logger=None, verbose=True):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
     Association results for each chromosome are written to parquet files
     in the format <output_dir>/<prefix>.cis_qtl_pairs.<chr>.parquet
+
+    If interaction_s is provided, the top association per phenotype is
+    written to <output_dir>/<prefix>.cis_qtl_top_assoc.txt.gz unless
+    write_top is set to False, in which case it is returned as a DataFrame
     """
     assert np.all(phenotype_df.columns==covariates_df.index)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -340,8 +344,11 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             else:
                 best_assoc['pval_emt'] = np.minimum(best_assoc['num_phenotypes']*best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
             best_assoc['pval_adj_bh'] = eigenmt.padjust_bh(best_assoc['pval_emt'])
-        best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
-                          sep='\t', float_format='%.6g')
+        if write_top:
+            best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
+                              sep='\t', float_format='%.6g')
+        else:
+            return best_assoc
     logger.write('done.')
 
 

@@ -118,15 +118,21 @@ def main():
                                 interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
                                 group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
             else:  # load genotypes for each chromosome separately
+                top_df = []
                 for chrom in pr.chrs:
                     g, pos_s = pr.get_region(chrom)
                     genotype_df = pd.DataFrame(g, index=pos_s.index, columns=pr.fam['iid'])[phenotype_df.columns]
                     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
-                    cis.map_nominal(genotype_df, variant_df[variant_df['chrom']==chrom],
-                                    phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
-                                    covariates_df, args.prefix,
-                                    interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                    group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
+                    chr_df = cis.map_nominal(genotype_df, variant_df[variant_df['chrom']==chrom],
+                                             phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
+                                             covariates_df, args.prefix,
+                                             interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
+                                             group_s=None, window=args.window, output_dir=args.output_dir, write_top=False, logger=logger, verbose=True)
+                    top_df.append(chr_df)
+                if interaction_s is not None:
+                    top_df = pd.concat(top_df)
+                    top_df.to_csv(os.path.join(args.output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(args.prefix)),
+                                  sep='\t', float_format='%.6g')
 
         elif args.mode=='cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
