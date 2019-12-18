@@ -3,6 +3,17 @@ import numpy as np
 import rpy2
 from rpy2.robjects.packages import importr
 from collections import Iterable
+from contextlib import contextmanager
+
+@contextmanager
+def suppress_stdout():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
 
 
 def p_adjust(p, method='BH'):
@@ -32,6 +43,7 @@ def pi0est(p, lambda_qvalue=None):
     """Wrapper for qvalue::pi0est"""
     qvalue = importr("qvalue")
     rp = rpy2.robjects.vectors.FloatVector(p)
+    # with suppress_stdout():
     if lambda_qvalue is None:
         pi0res = qvalue.pi0est(rp)
     else:
