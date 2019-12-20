@@ -53,8 +53,8 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
     permutations_t = phenotype_t[permutation_ix_t]
 
     r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, phenotype_t.reshape(1,-1), residualizer, return_sd=True)
-    r_nominal_t = r_nominal_t.squeeze()
-    std_ratio_t = std_ratio_t.squeeze()
+    r_nominal_t = r_nominal_t.squeeze(dim=-1)
+    std_ratio_t = std_ratio_t.squeeze(dim=-1)
     corr_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)  # genotypes x permutations
     r2_perm_t,_ = corr_t[~torch.isnan(corr_t).any(1),:].max(0)
 
