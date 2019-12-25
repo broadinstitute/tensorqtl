@@ -56,7 +56,10 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
     r_nominal_t = r_nominal_t.squeeze(dim=-1)
     std_ratio_t = std_ratio_t.squeeze(dim=-1)
     corr_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)  # genotypes x permutations
-    r2_perm_t,_ = corr_t[~torch.isnan(corr_t).any(1),:].max(0)
+    corr_t = corr_t[~torch.isnan(corr_t).any(1),:]
+    if corr_t.shape[0] == 0:
+        raise ValueError('All correlations resulted in NaN. Please check phenotype values.')
+    r2_perm_t,_ = corr_t.max(0)  # maximum correlation across permutations
 
     r2_nominal_t = r_nominal_t.pow(2)
     r2_nominal_t[torch.isnan(r2_nominal_t)] = -1  # workaround for nanargmax()

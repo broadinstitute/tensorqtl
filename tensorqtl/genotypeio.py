@@ -348,6 +348,12 @@ class InputGeneratorCis(object):
         self.n_samples = phenotype_df.shape[1]
         self.phenotype_df = phenotype_df
         self.phenotype_pos_df = phenotype_pos_df
+        # check for constant phenotypes and drop
+        m = np.all(phenotype_df.values == phenotype_df.values[:,[0]], 1)
+        if m.any():
+            print('    ** dropping {} constant phenotypes'.format(np.sum(m)))
+            self.phenotype_df = self.phenotype_df.loc[~m]
+            self.phenotype_pos_df = self.phenotype_pos_df.loc[~m]
         self.group_s = None
         self.window = window
 
