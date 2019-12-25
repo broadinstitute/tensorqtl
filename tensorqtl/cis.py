@@ -67,7 +67,7 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutati
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
                 interaction_s=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
-                output_dir='.', write_top=True, logger=None, verbose=True):
+                output_dir='.', write_top=True, write_stats=True, logger=None, verbose=True):
     """
     cis-QTL mapping: nominal associations for all variant-phenotype pairs
 
@@ -320,17 +320,18 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             for x in chr_res:
                 chr_res[x] = chr_res[x][:start]
 
-        chr_res_df = pd.DataFrame(chr_res)
-        if interaction_s is None:
-            m = chr_res_df['pval_nominal'].notnull()
-            chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
-        else:
-            m = chr_res_df['pval_gi'].notnull()
-            chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
-            chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
-            chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
-        print('    * writing output')
-        chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
+        if write_stats:
+            chr_res_df = pd.DataFrame(chr_res)
+            if interaction_s is None:
+                m = chr_res_df['pval_nominal'].notnull()
+                chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
+            else:
+                m = chr_res_df['pval_gi'].notnull()
+                chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
+                chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
+                chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
+            print('    * writing output')
+            chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
 
     if interaction_s is not None:
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
