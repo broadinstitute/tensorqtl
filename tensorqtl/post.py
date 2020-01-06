@@ -68,9 +68,26 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
 
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
 
+    # calculate MAF
+    n2 = 2 * genotypes_t.shape[1]
+    af_t = genotypes_t.sum(1) / n2
+    ix_t = af_t <= 0.5
+    maf_t = torch.where(ix_t, af_t, 1 - af_t)
+    # calculate MA samples and counts
+    m = genotypes_t > 0.5
+    a = m.sum(1).int()
+    b = (genotypes_t < 1.5).sum(1).int()
+    ma_samples_t = torch.where(ix_t, a, b)
+    a = (genotypes_t * m.float()).sum(1).int()
+    ma_count_t = torch.where(ix_t, a, n2-a)
+
     if interaction_s is None:
         genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
         phenotype_res_t = residualizer.transform(phenotypes_t)  # phenotypes x samples
+
+        gstd = genotype_res_t.var(1)
+        pstd = phenotype_res_t.var(1)
+        std_ratio_t = torch.sqrt(pstd / gstd)
 
         # center and normalize
         genotype_res_t = center_normalize(genotype_res_t, dim=1)
@@ -81,8 +98,13 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
 
         dof = residualizer.dof
         tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
-
+        slope_t = r_nominal_t * std_ratio_t
+        slope_se_t = (slope_t.abs().double() / tstat_t).float()
         pval = 2*stats.t.cdf(-np.abs(tstat_t.cpu()), dof)
+
+        rep_df = pd.DataFrame(np.c_[res_df.index, res_df['variant_id'], ma_samples_t.cpu(), ma_count_t.cpu(), maf_t.cpu(), pval, slope_t.cpu(), slope_se_t.cpu()],
+                              columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'maf', 'pval_nominal', 'slope', 'slope_se']).infer_objects()
+
     else:
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         ng, ns = genotypes_t.shape
@@ -111,13 +133,21 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
         rss_t = (r_t*r_t).sum(1)  # ng x np
         b_se_t = torch.sqrt( Xinv[:, torch.eye(3, dtype=torch.uint8).bool()] * rss_t.unsqueeze(-1) / dof )
         tstat_t = (b_t.double() / b_se_t.double()).float()
-        pval = 2*stats.t.cdf(-np.abs(tstat_t[:,2].cpu()), dof)
+        pval = 2*stats.t.cdf(-np.abs(tstat_t.cpu()), dof)
+        b = b_t.cpu()
+        b_se = b_se_t.cpu()
+
+        rep_df = pd.DataFrame(np.c_[res_df.index, res_df['variant_id'], ma_samples_t.cpu(), ma_count_t.cpu(), maf_t.cpu(),
+                                    pval[:,0], b[:,0], b_se[:,0], pval[:,1], b[:,1], b_se[:,1], pval[:,2], b[:,2], b_se[:,2]],
+                              columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'maf',
+                                       'pval_g', 'b_g', 'b_g_se', 'pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']).infer_objects()
+        pval = pval[:,2]
 
     try:
         pi1 = 1 - rfunc.pi0est(pval, lambda_qvalue=lambda_qvalue)[0]
     except:
         pi1 = np.NaN
-    return pi1, pval
+    return pi1, rep_df
 
 
 def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
