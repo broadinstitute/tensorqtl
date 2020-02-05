@@ -103,10 +103,29 @@ To save memory when using genotypes for a subset of samples, you can specify the
 ```
 pr = genotypeio.PlinkReader(plink_prefix_path, select_samples=phenotype_df.columns)
 ```
-#### *cis*-QTL mapping
+#### *cis*-QTL mapping: permutations
 ```
 cis_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df)
 tensorqtl.calculate_qvalues(cis_df, qvalue_lambda=0.85)
+```
+#### *cis*-QTL mapping: summary statistics for all variant-phenotype pairs
+```
+cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
+                covariates_df, prefix, output_dir='.')
+```
+#### *cis*-QTL mapping: conditionally independent QTLs
+This requires the output from the permutations step (`map_cis`) above.
+```
+indep_df = cis.map_independent(genotype_df, variant_df, cis_df,
+                               phenotype_df, phenotype_pos_df, covariates_df)
+```
+#### *cis*-QTL mapping: interactions
+Instead of mapping the standard linear model (p ~ g), includes an interaction term (p ~ g + i + gi) and returns full summary statistics for this model. The interaction term is a `pd.Series` mapping sample ID to interaction value.
+With the `run_eigenmt=True` option, [eigenMT](https://www.cell.com/ajhg/fulltext/S0002-9297(15)00492-9)-adjusted p-values are computed.
+```
+cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
+                interaction_s=interaction_s, maf_threshold_interaction=0.05,
+                group_s=None, run_eigenmt=True, output_dir='.')
 ```
 #### *trans*-QTL mapping
 ```
