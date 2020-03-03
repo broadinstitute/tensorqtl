@@ -19,7 +19,7 @@ def _check_dependency(name):
         raise RuntimeError('External dependency \''+name+'\' not installed')
 
 
-def _print_progress(k, n, entity):
+def print_progress(k, n, entity):
     s = '\r    processing {} {}/{}'.format(entity, k, n)
     if k == n:
         s += '\n'
@@ -321,7 +321,7 @@ class GenotypeGeneratorTrans(object):
 
         for k,i in enumerate(batch_indexes, enum_start):  # loop through batches
             if verbose:
-                _print_progress(k, num_batches, 'batch')
+                print_progress(k, num_batches, 'batch')
             g = self.genotype_df.values[i[0]:i[1]]
             ix = self.genotype_df.index[i[0]:i[1]]  # variant IDs
             yield g, ix
@@ -332,7 +332,8 @@ class InputGeneratorCis(object):
     Input generator for cis-mapping
 
     Inputs:
-      plink_reader:     PlinkReader object
+      genotype_df:      genotype DataFrame (genotypes x samples)
+      variant_df:       DataFrame mapping variant_id (index) to chrom, pos
       phenotype_df:     phenotype DataFrame (phenotypes x samples)
       phenotype_pos_df: DataFrame defining position of each phenotype, with columns 'chr' and 'tss'
       window:           cis-window (selects variants within +- cis-window from TSS)
@@ -427,7 +428,7 @@ class InputGeneratorCis(object):
         if self.group_s is None:
             for k,phenotype_id in enumerate(phenotype_ids, chr_offset+1):
                 if verbose:
-                    _print_progress(k, self.n_phenotypes, 'phenotype')
+                    print_progress(k, self.n_phenotypes, 'phenotype')
                 p = self.phenotype_df.values[index_dict[phenotype_id]]
                 # p = self.phenotype_df.values[k]
                 r = self.cis_ranges[phenotype_id]
@@ -436,7 +437,7 @@ class InputGeneratorCis(object):
             gdf = self.group_s[phenotype_ids].groupby(self.group_s, sort=False)
             for k,(group_id,g) in enumerate(gdf, chr_offset+1):
                 if verbose:
-                    _print_progress(k, self.n_groups, 'phenotype group')
+                    print_progress(k, self.n_groups, 'phenotype group')
                 # check that ranges are the same for all phenotypes within group
                 assert np.all([self.cis_ranges[g.index[0]][0] == self.cis_ranges[i][0] and self.cis_ranges[g.index[0]][1] == self.cis_ranges[i][1] for i in g.index[1:]])
                 group_phenotype_ids = g.index.tolist()

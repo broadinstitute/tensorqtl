@@ -27,8 +27,8 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
 
     dof = residualizer.dof
     slope_t = r_nominal_t * std_ratio_t.squeeze()
-    tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
-    slope_se_t = (slope_t.abs().double() / tstat_t).float()
+    tstat_t = r_nominal_t * torch.sqrt(dof / (1 - r2_nominal_t))
+    slope_se_t = (slope_t.double() / tstat_t).float()
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
 
