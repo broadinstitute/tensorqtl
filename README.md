@@ -3,7 +3,7 @@
 tensorQTL is a GPU-based QTL mapper, enabling ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
 
 If you use tensorQTL in your research, please cite the following paper:
-[Taylor-Weiner, Aguet, et al., bioRxiv, 2019](https://www.biorxiv.org/content/10.1101/470138v3).
+[Taylor-Weiner, Aguet, et al., Genome Biol. 20:228, 2019](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1836-7).
 
 Empirical beta-approximated p-values are computed as described in [FastQTL](http://fastqtl.sourceforge.net/) ([Ongen et al., 2016](https://academic.oup.com/bioinformatics/article/32/10/1479/1742545)).
 
