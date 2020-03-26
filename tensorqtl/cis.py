@@ -336,7 +336,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
             print('    * writing output')
             chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
 
-    if interaction_s is not None:
+    if interaction_s is not None and len(best_assoc) > 0:
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
         m = best_assoc['pval_g'].notnull()
         best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
