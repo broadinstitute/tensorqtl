@@ -275,9 +275,10 @@ def read_phenotype_bed(phenotype_bed):
         phenotype_df = pd.read_csv(phenotype_bed, sep='\t', index_col=3, dtype={'#chr':str, '#Chr':str})
     elif phenotype_bed.endswith('.parquet'):
         phenotype_df = pd.read_parquet(phenotype_bed)
+        phenotype_df.set_index(phenotype_df.columns[3], inplace=True)
     else:
         raise ValueError('Unsupported file type.')
-    phenotype_df.rename(columns={i:i.lower() for i in phenotype_df.columns[:3]}, inplace=True)
-    phenotype_pos_df = phenotype_df[['#chr', 'end']].rename(columns={'#chr':'chr', 'end':'tss'})
-    phenotype_df.drop(['#chr', 'start', 'end'], axis=1, inplace=True)
+    phenotype_df.rename(columns={i:i.lower().replace('#chr','chr') for i in phenotype_df.columns[:3]}, inplace=True)
+    phenotype_pos_df = phenotype_df[['chr', 'end']].rename(columns={'end':'tss'})
+    phenotype_df.drop(['chr', 'start', 'end'], axis=1, inplace=True)
     return phenotype_df, phenotype_pos_df
