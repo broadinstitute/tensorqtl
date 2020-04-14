@@ -151,7 +151,7 @@ def run_eigenmt(genotype_df, variant_df, phenotype_df, phenotype_pos_df, interac
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=window)
     start_time = time.time()
     m_eff = OrderedDict()
-    for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
+    for k, (phenotype, genotypes, _, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
 
         # copy genotypes to GPU
         genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
