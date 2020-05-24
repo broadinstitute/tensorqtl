@@ -105,11 +105,16 @@ def center_normalize(M_t, dim=0):
     return N_t / torch.sqrt(torch.pow(N_t, 2).sum(dim=dim, keepdim=True))
 
 
-def calculate_corr(genotype_t, phenotype_t, residualizer, return_sd=False):
+def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_sd=False):
     """Calculate correlation between normalized residual genotypes and phenotypes"""
+
     # residualize
-    genotype_res_t = residualizer.transform(genotype_t)  # variants x samples
-    phenotype_res_t = residualizer.transform(phenotype_t)  # phenotypes x samples
+    if residualizer is not None:
+        genotype_res_t = residualizer.transform(genotype_t)  # variants x samples
+        phenotype_res_t = residualizer.transform(phenotype_t)  # phenotypes x samples
+    else:
+        genotype_res_t = genotype_t
+        phenotype_res_t = phenotype_t
 
     if return_sd:
         gstd = genotype_res_t.var(1)
@@ -126,7 +131,7 @@ def calculate_corr(genotype_t, phenotype_t, residualizer, return_sd=False):
         return torch.mm(genotype_res_t, phenotype_res_t.t())
 
 
-def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
+def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer=None,
                                   return_sparse=False, tstat_threshold=None):
     """
     genotypes_t:   [num_genotypes x num_samples]
@@ -144,10 +149,11 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)
 
     # residualize rows
-    g0_t = residualizer.transform(g0_t, center=False)
-    gi0_t = residualizer.transform(gi0_t, center=False)
-    p0_t = residualizer.transform(p0_t, center=False)
-    i0_t = residualizer.transform(i0_t, center=False)
+    if residualizer is not None:
+        g0_t = residualizer.transform(g0_t, center=False)
+        gi0_t = residualizer.transform(gi0_t, center=False)
+        p0_t = residualizer.transform(p0_t, center=False)
+        i0_t = residualizer.transform(i0_t, center=False)
     i0_t = i0_t.repeat(ng, 1)
 
     # regression (in float; loss of precision may occur in edge cases)
@@ -160,7 +166,10 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     # calculate b, b_se
     # [(ng x 3 x 3) x (ng x 3 x ns)] x (ng x ns x np) = (ng x 3 x np)
     b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), torch.transpose(p0_tile_t, 1, 2))
-    dof = residualizer.dof - 2
+    if residualizer is not None:
+        dof = residualizer.dof - 2
+    else:
+        dof = phenotypes_t.shape[1] - 4
     if nps==1:
         r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
         rss_t = (r_t*r_t).sum(1)

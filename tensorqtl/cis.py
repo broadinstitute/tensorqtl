@@ -12,7 +12,7 @@ import genotypeio, eigenmt
 from core import *
 
 
-def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
+def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     """
     Calculate nominal associations
 
@@ -21,11 +21,14 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
     covariates_t: covariates matrix, samples x covariates
     """
     p = phenotype_t.reshape(1,-1)
-    r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, p, residualizer, return_sd=True)
+    r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, p, residualizer=residualizer, return_sd=True)
     r_nominal_t = r_nominal_t.squeeze()
     r2_nominal_t = r_nominal_t.double().pow(2)
 
-    dof = residualizer.dof
+    if residualizer is not None:
+        dof = residualizer.dof
+    else:
+        dof = phenotype_t.shape[1] - 2
     slope_t = r_nominal_t * std_ratio_t.squeeze()
     tstat_t = r_nominal_t * torch.sqrt(dof / (1 - r2_nominal_t))
     slope_se_t = (slope_t.double() / tstat_t).float()
@@ -48,14 +51,15 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer):
     return tstat_t, slope_t, slope_se_t, maf_t, ma_samples_t, ma_count_t
 
 
-def calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t):
+def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=None):
     """Calculate nominal and empirical correlations"""
     permutations_t = phenotype_t[permutation_ix_t]
 
-    r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, phenotype_t.reshape(1,-1), residualizer, return_sd=True)
+    r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, phenotype_t.reshape(1,-1),
+                                              residualizer=residualizer, return_sd=True)
     r_nominal_t = r_nominal_t.squeeze(dim=-1)
     std_ratio_t = std_ratio_t.squeeze(dim=-1)
-    corr_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)  # genotypes x permutations
+    corr_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)  # genotypes x permutations
     corr_t = corr_t[~torch.isnan(corr_t).any(1),:]
     if corr_t.shape[0] == 0:
         raise ValueError('All correlations resulted in NaN. Please check phenotype values.')
@@ -476,7 +480,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
 
-            res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+            res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
@@ -503,7 +507,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             buf = []
             for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                 phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes.shape[0], phenotype_id])
@@ -602,7 +606,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 residualizer = Residualizer(covariates_t)
                 del covariates_t
 
-                res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
                 r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
                 x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                 # add to list if empirical p-value passes significance threshold
@@ -632,7 +636,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     residualizer = Residualizer(covariates_t)
                     del covariates_t
 
-                    res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
                     r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
                     var_ix = genotype_range[var_ix]
                     variant_id = variant_df.index[var_ix]
@@ -676,7 +680,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 buf = []
                 for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                     phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                    res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
                     res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                     res[2] = genotype_range[res[2]]
                     buf.append(res + [genotypes.shape[0], phenotype_id])
@@ -708,7 +712,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     buf = []
                     for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                        res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
+                        res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
                         res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                         res[2] = genotype_range[res[2]]
                         buf.append(res + [genotypes.shape[0], phenotype_id])
