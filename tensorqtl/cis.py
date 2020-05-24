@@ -465,7 +465,15 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
+
+            # filter monomorphic variants
+            genotypes_t = genotypes_t[~(genotypes_t == genotypes_t[:, [0]]).all(1)]
+            if genotypes_t.shape[0] == 0:
+                logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
+                continue
+
             impute_mean(genotypes_t)
+
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
 
             res = calculate_cis_permutations(genotypes_t, phenotype_t, residualizer, permutation_ix_t)
@@ -482,6 +490,13 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
+
+            # filter monomorphic variants
+            genotypes_t = genotypes_t[~(genotypes_t == genotypes_t[:, [0]]).all(1)]
+            if genotypes_t.shape[0] == 0:
+                logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
+                continue
+
             impute_mean(genotypes_t)
 
             # iterate over phenotypes
