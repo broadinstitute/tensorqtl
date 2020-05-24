@@ -46,11 +46,18 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     logger.write('  * QTL phenotypes @ FDR {:.2f}: {}'.format(fdr, np.sum(res_df['qval']<=fdr)))
 
     # determine global min(p) significance threshold and calculate nominal p-value threshold for each gene
-    ub = res_df.loc[res_df['qval']>fdr, 'pval_beta'].sort_values()[0]
-    lb = res_df.loc[res_df['qval']<=fdr, 'pval_beta'].sort_values()[-1]
-    pthreshold = (lb+ub)/2
-    logger.write('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
-    res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
+    lb = res_df.loc[res_df['qval']<=fdr, 'pval_beta'].sort_values()
+    ub = res_df.loc[res_df['qval']>fdr, 'pval_beta'].sort_values()
+
+    if lb.shape[0] > 0:  # significant phenotypes
+        lb = lb[-1]
+        if ub.shape[0] > 0:
+            ub = ub[0]
+            pthreshold = (lb+ub)/2
+        else:
+            pthreshold = lb
+        logger.write('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
+        res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
 def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, interaction_s=None,
