@@ -82,10 +82,10 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     dof = n_samples - 2 - covariates_df.shape[1]
     if return_sparse:
         tstat_threshold = -stats.t.ppf(pval_threshold/2, dof)
-        r2_threshold = tstat_threshold**2 / (dof + tstat_threshold**2)
+        r_threshold = tstat_threshold / np.sqrt(dof + tstat_threshold**2)
     else:
         tstat_threshold = None
-        r2_threshold = None
+        r_threshold = None
 
     if interaction_s is None:
         ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size)
@@ -97,30 +97,35 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
 
             # filter by MAF
-            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
-            # genotypes_t = genotypes_t[:,genotype_ix_t]
-            # impute_mean(genotypes_t)
-            # genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
+            genotypes_t = genotypes_t[:,genotype_ix_t]
+            impute_mean(genotypes_t)
+            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
 
-            r2_t = calculate_corr(genotypes_t, phenotypes_t, residualizer).pow(2)
+            r_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, phenotypes_t, residualizer, return_var=True)
             del genotypes_t
 
-            maf = maf_t.cpu()
             if return_sparse:
-                m = r2_t >= r2_threshold
-                r2_t = r2_t.masked_select(m)
-                ix = m.nonzero().cpu().numpy()  # sparse index
-                r2_t = r2_t.type(torch.float64)
-                tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
-                if not return_r2:
-                    res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]]])
-                else:
-                    res.append(np.c_[variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]], tstat.cpu(), maf[ix[:,0]], r2_t.cpu()])
+                m = r_t.abs() >= r_threshold
+                ix_t = m.nonzero()  # sparse index
+                ix = ix_t.cpu().numpy()
+
+                r_t = r_t.masked_select(m).type(torch.float64)
+                r2_t = r_t.pow(2)
+                tstat_t = r_t * torch.sqrt(dof / (1 - r2_t))
+                std_ratio_t = torch.sqrt(phenotype_var_t[ix_t[:,1]] / genotype_var_t[ix_t[:,0]])
+                b_t = r_t * std_ratio_t
+                b_se_t = (b_t / tstat_t).type(torch.float32)
+
+                res.append(np.c_[
+                    variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]],
+                    tstat_t.cpu(), b_t.cpu(), b_se_t.cpu(),
+                    r2_t.float().cpu(), maf_t[ix_t[:,0]].cpu()
+                ])
             else:
-                r2_t = r2_t.type(torch.float64)
-                tstat = torch.sqrt(dof * r2_t / (1 - r2_t))
-                res.append(np.c_[variant_ids, tstat.cpu()])
+                r_t = r_t.type(torch.float64)
+                tstat_t = r_t * torch.sqrt(dof / (1 - r_t.pow(2)))
+                res.append(np.c_[variant_ids, tstat_t.cpu()])
         logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
         del phenotypes_t
         del residualizer
@@ -129,14 +134,14 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         res = np.concatenate(res)
         if return_sparse:
             res[:,2] = 2*stats.t.cdf(-np.abs(res[:,2].astype(np.float64)), dof)
-            cols = ['variant_id', 'phenotype_id', 'pval', 'maf']
-            if return_r2:
-                cols += ['r2']
-            pval_df = pd.DataFrame(res, columns=cols)
+            pval_df = pd.DataFrame(res, columns=['variant_id', 'phenotype_id', 'pval', 'b', 'b_se', 'r2', 'maf'])
             pval_df['pval'] = pval_df['pval'].astype(np.float64)
+            pval_df['b'] = pval_df['b'].astype(np.float32)
+            pval_df['b_se'] = pval_df['b_se'].astype(np.float32)
+            pval_df['r2'] = pval_df['r2'].astype(np.float32)
             pval_df['maf'] = pval_df['maf'].astype(np.float32)
-            if return_r2:
-                pval_df['r2'] = pval_df['r2'].astype(np.float32)
+            if not return_r2:
+                pval_df.drop('r2', axis=1, inplace=True)
         else:
             pval = 2*stats.t.cdf(-np.abs(res[:,1:].astype(np.float64)), dof)
             pval_df = pd.DataFrame(pval, index=res[:,0], columns=phenotype_df.index)
@@ -173,7 +178,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                 genotypes_t, mask_t = filter_maf_interaction(genotypes_t[:, genotype_ix_t],
                                                              interaction_mask_t=interaction_mask_t,
                                                              maf_threshold_interaction=maf_threshold)
-                if genotypes_t.shape[0]>0:
+                if genotypes_t.shape[0] > 0:
                     ng, ns = genotypes_t.shape
 
                     # calculate MAF
