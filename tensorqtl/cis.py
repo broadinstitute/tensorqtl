@@ -21,7 +21,8 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     covariates_t: covariates matrix, samples x covariates
     """
     p = phenotype_t.reshape(1,-1)
-    r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, p, residualizer=residualizer, return_sd=True)
+    r_nominal_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, p, residualizer=residualizer, return_var=True)
+    std_ratio_t = torch.sqrt(phenotype_var_t.reshape(1,-1) / genotype_var_t.reshape(-1,1))
     r_nominal_t = r_nominal_t.squeeze()
     r2_nominal_t = r_nominal_t.double().pow(2)
 
@@ -55,8 +56,9 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, resid
     """Calculate nominal and empirical correlations"""
     permutations_t = phenotype_t[permutation_ix_t]
 
-    r_nominal_t, std_ratio_t = calculate_corr(genotypes_t, phenotype_t.reshape(1,-1),
-                                              residualizer=residualizer, return_sd=True)
+    r_nominal_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, phenotype_t.reshape(1,-1),
+                                                                  residualizer=residualizer, return_var=True)
+    std_ratio_t = torch.sqrt(phenotype_var_t.reshape(1,-1) / genotype_var_t.reshape(-1,1))
     r_nominal_t = r_nominal_t.squeeze(dim=-1)
     std_ratio_t = std_ratio_t.squeeze(dim=-1)
     corr_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)  # genotypes x permutations

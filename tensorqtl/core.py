@@ -92,11 +92,12 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
 def impute_mean(genotypes_t):
     """Impute missing genotypes to mean"""
     m = genotypes_t == -1
-    a = genotypes_t.sum(1)
-    b = m.sum(1).float()
-    mu = (a + b) / (genotypes_t.shape[1] - b)
     ix = m.nonzero()
-    genotypes_t[m] = mu[ix[:,0]]
+    if len(ix) > 0:
+        a = genotypes_t.sum(1)
+        b = m.sum(1).float()
+        mu = (a + b) / (genotypes_t.shape[1] - b)
+        genotypes_t[m] = mu[ix[:,0]]
 
 
 def center_normalize(M_t, dim=0):
@@ -105,7 +106,7 @@ def center_normalize(M_t, dim=0):
     return N_t / torch.sqrt(torch.pow(N_t, 2).sum(dim=dim, keepdim=True))
 
 
-def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_sd=False):
+def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False):
     """Calculate correlation between normalized residual genotypes and phenotypes"""
 
     # residualize
@@ -116,17 +117,17 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_sd=False):
         genotype_res_t = genotype_t
         phenotype_res_t = phenotype_t
 
-    if return_sd:
-        gstd = genotype_res_t.var(1)
-        pstd = phenotype_res_t.var(1)
+    if return_var:
+        genotype_var_t = genotype_res_t.var(1)
+        phenotype_var_t = phenotype_res_t.var(1)
 
     # center and normalize
     genotype_res_t = center_normalize(genotype_res_t, dim=1)
     phenotype_res_t = center_normalize(phenotype_res_t, dim=1)
 
     # correlation
-    if return_sd:
-        return torch.mm(genotype_res_t, phenotype_res_t.t()), torch.sqrt(pstd.reshape(1,-1) / gstd.reshape(-1,1))
+    if return_var:
+        return torch.mm(genotype_res_t, phenotype_res_t.t()), genotype_var_t, phenotype_var_t
     else:
         return torch.mm(genotype_res_t, phenotype_res_t.t())
 
