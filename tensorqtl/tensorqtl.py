@@ -28,11 +28,11 @@ def main():
     parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
-    parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >=maf_threshold. Default: 0')
+    parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >= maf_threshold. Default: 0')
     parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
     parser.add_argument('--return_r2', action='store_true', help='Return r2 (only for sparse trans-QTL output)')
-    parser.add_argument('--best_only', action='store_true', help='Produce output only for the top association/phenotype')
+    parser.add_argument('--best_only', action='store_true', help='Only write lead association for each phenotype (interaction mode only)')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=20000, help='Batch size. Reduce this if encountering OOM errors.')
     parser.add_argument('--load_split', action='store_true', help='Load genotypes into memory separately for each chromosome.')
@@ -116,7 +116,8 @@ def main():
             if not args.load_split:
                 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
                                 interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                group_s=None, window=args.window, output_dir=args.output_dir, logger=logger, verbose=True)
+                                group_s=None, window=args.window, output_dir=args.output_dir,
+                                write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
             else:  # load genotypes for each chromosome separately
                 top_df = []
                 for chrom in pr.chrs:
@@ -127,7 +128,8 @@ def main():
                                              phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
                                              covariates_df, args.prefix,
                                              interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                             group_s=None, window=args.window, output_dir=args.output_dir, write_top=False, logger=logger, verbose=True)
+                                             group_s=None, window=args.window, output_dir=args.output_dir,
+                                             write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
                     top_df.append(chr_df)
                 if interaction_s is not None:
                     top_df = pd.concat(top_df)
