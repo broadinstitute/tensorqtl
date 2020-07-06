@@ -358,19 +358,18 @@ class InputGeneratorCis(object):
         self.group_s = None
         self.window = window
 
-        self.n_phenotypes = phenotype_df.shape[0]
-        self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
-        self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
-        self.chrs = phenotype_pos_df['chr'].unique()
+        self.phenotype_tss = self.phenotype_pos_df['tss'].to_dict()
+        self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
+        self.chrs = self.phenotype_pos_df['chr'].unique()
         self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
 
         # check phenotypes & calculate genotype ranges
         # get genotype indexes corresponding to cis-window of each phenotype
         valid_ix = []
         self.cis_ranges = {}
-        for k,phenotype_id in enumerate(phenotype_df.index,1):
+        for k,phenotype_id in enumerate(self.phenotype_df.index,1):
             if np.mod(k, 1000) == 0:
-                print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]), end='')
+                print('\r  * checking phenotypes: {}/{}'.format(k, self.phenotype_df.shape[0]), end='')
 
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
@@ -391,15 +390,15 @@ class InputGeneratorCis(object):
             if len(r) > 0:
                 valid_ix.append(phenotype_id)
                 self.cis_ranges[phenotype_id] = r
-        print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]))
-        if len(valid_ix)!=phenotype_df.shape[0]:
+        print('\r  * checking phenotypes: {}/{}'.format(k, self.phenotype_df.shape[0]))
+        if len(valid_ix) != self.phenotype_df.shape[0]:
             print('    ** dropping {} phenotypes without variants in cis-window'.format(
-                  phenotype_df.shape[0]-len(valid_ix)))
+                  self.phenotype_df.shape[0] - len(valid_ix)))
             self.phenotype_df = self.phenotype_df.loc[valid_ix]
-            self.n_phenotypes = self.phenotype_df.shape[0]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
-            self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
-            self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
+            self.phenotype_tss = self.phenotype_pos_df['tss'].to_dict()
+            self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
+        self.n_phenotypes = self.phenotype_df.shape[0]
         if group_s is not None:
             self.group_s = group_s.loc[self.phenotype_df.index].copy()
             self.n_groups = self.group_s.unique().shape[0]

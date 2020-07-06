@@ -464,6 +464,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
     res_df = []
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=group_s, window=window)
+    if igc.n_phenotypes == 0:
+        raise ValueError('No valid phenotypes found.')
     start_time = time.time()
     logger.write('  * computing permutations')
     if group_s is None:
@@ -583,6 +585,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
     res_df = []
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=group_s, window=window)
+    if igc.n_phenotypes == 0:
+        raise ValueError('No valid phenotypes found.')
     logger.write('  * computing independent QTLs')
     start_time = time.time()
     if group_s is None:
