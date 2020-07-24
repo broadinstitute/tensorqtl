@@ -606,7 +606,6 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         maf_t = torch.where(ix_t, af_t, 1 - af_t)
 
         variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
-        # res['pip'] = pd.Series(res['pip'], index=variant_ids)
         res['pip'] = pd.DataFrame({'pip':res['pip'], 'maf':maf_t.cpu().numpy()}, index=variant_ids)
         susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
 
@@ -623,12 +622,12 @@ def get_summary(res_dict, verbose=True):
     summary_df = []
     for n,k in enumerate(res_dict, 1):
         if verbose:
-            print('\rProcessing {}/{}'.format(n, len(res_dict)), end='')
+            print(f'\rMaking summary {n}/{len(res_dict)}', end='' if n < len(res_dict) else None)
         if res_dict[k]['sets']['cs'] is not None:
             assert res_dict[k]['converged'] == True
             for c in sorted(res_dict[k]['sets']['cs'], key=lambda x: int(x.replace('L',''))):
                 cs = res_dict[k]['sets']['cs'][c]  # indexes
-                p = res_dict[k]['pip'].rename('pip').iloc[cs].copy().reset_index()
+                p = res_dict[k]['pip'].iloc[cs].copy().reset_index()
                 p['cs_id'] = c.replace('L','')
                 p.insert(0, 'gene_id', k)
                 summary_df.append(p)
