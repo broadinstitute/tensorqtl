@@ -495,17 +495,16 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
     elbo = torch.full([max_iter + 1], np.NaN).to(device)
     elbo[0] = -np.Inf;
     tracking = []
-
     for i in range(1, max_iter+1):
 
         s = update_each_effect(X_t, xattr, y_t, s,
                                estimate_prior_variance=estimate_prior_variance,
                                estimate_prior_method=estimate_prior_method,
                                check_null_threshold=0)
-        elbo[i + 1] = get_objective(X_t, xattr, y_t, s)
+        elbo[i] = get_objective(X_t, xattr, y_t, s)
         if verbose:
-            print('Objective (iter {}): {}'.format(i, elbo[i + 1]))
-        if (elbo[i + 1] - elbo[i]) < tol:
+            print('Objective (iter {}): {}'.format(i, elbo[i]))
+        if (elbo[i] - elbo[i-1]) < tol:
             s['converged'] = True
             break
 
@@ -516,8 +515,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
             if verbose:
                 print('Objective (iter {}): {}'.format(i, get_objective(X_t, xattr, y_t, s)))
 
-    elbo = elbo[2:(i + 1)]  # Remove first (infinite) entry, and trailing NAs.
-    s['elbo'] = elbo
+    s['elbo'] = elbo[1:i+1]  # Remove first (infinite) entry, and trailing NAs.
     s['niter'] = i
 
     if 'converged' not in s:
