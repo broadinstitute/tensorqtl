@@ -546,7 +546,7 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         estimate_residual_variance=True, 
         estimate_prior_variance=True, tol=1e-3,
         coverage=0.95, min_abs_corr=0.5,
-        window=1000000, logger=None, verbose=True):
+        max_iter=100, window=1000000, logger=None, verbose=True):
     """
     SuSiE fine-mapping: computes SuSiE model for all phenotypes
     """
@@ -596,7 +596,8 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
                     scaled_prior_variance=scaled_prior_variance,
                     coverage=coverage, min_abs_corr=min_abs_corr,
                     estimate_residual_variance=estimate_residual_variance,
-                    estimate_prior_variance=estimate_prior_variance, tol=tol)
+                    estimate_prior_variance=estimate_prior_variance,
+                    tol=tol, max_iter=max_iter)
 
         variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
         res['pip'] = pd.Series(res['pip'], index=variant_ids)
