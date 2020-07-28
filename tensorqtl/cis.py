@@ -18,7 +18,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
 
     genotypes_t: genotypes x samples
     phenotype_t: single phenotype
-    covariates_t: covariates matrix, samples x covariates
+    residualizer: Residualizer object (see core.py)
     """
     p = phenotype_t.reshape(1,-1)
     r_nominal_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, p, residualizer=residualizer, return_var=True)
@@ -129,8 +129,8 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
     return df
 
 
-def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
-                interaction_s=None, maf_threshold_interaction=0.05,
+def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
+                covariates_df=None, interaction_s=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
                 output_dir='.', write_top=True, write_stats=True, logger=None, verbose=True):
     """
@@ -143,7 +143,6 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
     written to <output_dir>/<prefix>.cis_qtl_top_assoc.txt.gz unless
     write_top is set to False, in which case it is returned as a DataFrame
     """
-    assert np.all(phenotype_df.columns==covariates_df.index)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if logger is None:
@@ -154,24 +153,25 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
     logger.write('cis-QTL mapping: nominal associations for all variant-phenotype pairs')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
     logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
-    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+    if covariates_df is not None:
+        assert np.all(phenotype_df.columns==covariates_df.index)
+        logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+        residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
+        dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
+    else:
+        residualizer = None
+        dof = phenotype_df.shape[1] - 2
     logger.write('  * {} variants'.format(variant_df.shape[0]))
     if interaction_s is not None:
-        assert np.all(interaction_s.index==covariates_df.index)
+        assert np.all(interaction_s.index==phenotype_df.columns)
         logger.write('  * including interaction term')
         if maf_threshold_interaction>0:
             logger.write('    * using {:.2f} MAF threshold'.format(maf_threshold_interaction))
 
-    covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
-    residualizer = Residualizer(covariates_t)
-    del covariates_t
-
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
-    if interaction_s is None:
-        dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
-    else:
-        dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
+    if interaction_s is not None:
+        dof -= 2
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         if maf_threshold_interaction > 0:
             interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
@@ -232,15 +232,15 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                 tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
 
                 if interaction_s is None:
-                    res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
+                    res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                     tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     n = len(variant_ids)
                 else:
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
                                                                  maf_threshold_interaction=maf_threshold_interaction)
                     if genotypes_t.shape[0]>0:
-                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
-                                                            return_sparse=False)
+                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
+                                                            residualizer=residualizer, return_sparse=False)
                         tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         mask = mask_t.cpu().numpy()
                         variant_ids = variant_ids[mask]
@@ -308,10 +308,11 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                     phenotype_t = torch.tensor(phenotypes[0], dtype=torch.float).to(device)
 
                     if interaction_s is None:
-                        res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
+                        res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                         tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     else:
-                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer, return_sparse=False)
+                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
+                                                            residualizer=residualizer, return_sparse=False)
                         tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     px = [phenotype_id]*n
 
@@ -319,10 +320,11 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                     for phenotype, phenotype_id in zip(phenotypes[1:], phenotype_ids[1:]):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                         if interaction_s is None:
-                            res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
+                            res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                             tstat0, slope0, slope_se0, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         else:
-                            res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer, return_sparse=False)
+                            res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
+                                                                residualizer=residualizer, return_sparse=False)
                             tstat0, b0, b_se0, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
 
                         # find associations that are stronger for current phenotype
@@ -482,14 +484,13 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
     return res_s
 
 
-def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
+def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=None,
             group_s=None, beta_approx=True, nperm=10000,
             window=1000000, logger=None, seed=None, verbose=True):
     """Run cis-QTL mapping"""
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    assert np.all(phenotype_df.columns==covariates_df.index)
     if logger is None:
         logger = SimpleLogger()
 
@@ -499,16 +500,18 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     if group_s is not None:
         logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
         group_dict = group_s.to_dict()
-    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+    if covariates_df is not None:
+        assert np.all(phenotype_df.columns==covariates_df.index)
+        logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+        residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
+        dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
+    else:
+        residualizer = None
+        dof = phenotype_df.shape[1] - 2
     logger.write('  * {} variants'.format(genotype_df.shape[0]))
-
-    covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
-    residualizer = Residualizer(covariates_t)
-    del covariates_t
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
-    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
 
     # permutation indices
     n_samples = phenotype_df.shape[1]
@@ -540,7 +543,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
 
-            res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
+            res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
@@ -567,7 +570,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             buf = []
             for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                 phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes.shape[0], phenotype_id])
@@ -664,11 +667,9 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
                 dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
-                covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
-                residualizer = Residualizer(covariates_t)
-                del covariates_t
+                residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
-                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
                 r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
                 x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                 # add to list if empirical p-value passes significance threshold
@@ -694,11 +695,9 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                         dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values,
                     ])
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
-                    covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
-                    residualizer = Residualizer(covariates_t)
-                    del covariates_t
+                    residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
-                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
                     r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
                     var_ix = genotype_range[var_ix]
                     variant_id = variant_df.index[var_ix]
@@ -734,15 +733,13 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
                 dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
-                covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
-                residualizer = Residualizer(covariates_t)
-                del covariates_t
+                residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
                 # iterate over phenotypes
                 buf = []
                 for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                     phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
                     res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                     res[2] = genotype_range[res[2]]
                     buf.append(res + [genotypes.shape[0], phenotype_id])
@@ -766,15 +763,13 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                         dosage_df[np.setdiff1d(forward_df['variant_id'], variant_id)].values,
                     ])
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
-                    covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
-                    residualizer = Residualizer(covariates_t)
-                    del covariates_t
+                    residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
                     # iterate over phenotypes
                     buf = []
                     for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                        res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)
+                        res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
                         res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                         res[2] = genotype_range[res[2]]
                         buf.append(res + [genotypes.shape[0], phenotype_id])
