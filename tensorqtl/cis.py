@@ -73,6 +73,62 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, resid
     return r_nominal_t[ix], std_ratio_t[ix], ix, r2_perm_t, genotypes_t[ix]
 
 
+def calculate_association(genotype_df, phenotype_s, covariates_df=None,
+                          interaction_s=None, maf_threshold_interaction=0.05,
+                          window=1000000, verbose=True):
+    """
+    Helper function for computing the association between
+    a set of genotypes and a single phenotype.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    assert genotype_df.columns.equals(phenotype_s.index)
+
+    # copy to GPU
+    phenotype_t = torch.tensor(phenotype_s.values, dtype=torch.float).to(device)
+    genotypes_t = torch.tensor(genotype_df.values, dtype=torch.float).to(device)
+    impute_mean(genotypes_t)
+
+    dof = phenotype_s.shape[0] - 2
+
+    if covariates_df is not None:
+        assert phenotype_s.index.equals(covariates_df.index)
+        residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
+        dof -= covariates_df.shape[1]
+    else:
+        residualizer = None
+
+    if interaction_s is None:
+        res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
+        tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+        df = pd.DataFrame({
+            'pval_nominal':2*stats.t.cdf(-np.abs(tstat), dof),
+            'slope':slope, 'slope_se':slope_se,
+            'tstat':tstat, 'maf':maf, 'ma_samples':ma_samples, 'ma_count':ma_count,
+        }, index=genotype_df.index)
+    else:
+        interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
+        if maf_threshold_interaction > 0:
+            interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
+        else:
+            interaction_mask_t = None
+
+        genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
+                                                     maf_threshold_interaction=maf_threshold_interaction)
+        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
+                                            return_sparse=False)
+        tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+        mask = mask_t.cpu().numpy()
+        dof -= 2
+
+        df = pd.DataFrame({
+            'pval_g':2*stats.t.cdf(-np.abs(tstat[:,0]), dof), 'b_g':b[:,0], 'b_g_se':b_se[:,0],
+            'pval_i':2*stats.t.cdf(-np.abs(tstat[:,1]), dof), 'b_i':b[:,1], 'b_i_se':b_se[:,1],
+            'pval_gi':2*stats.t.cdf(-np.abs(tstat[:,2]), dof), 'b_gi':b[:,2], 'b_gi_se':b_se[:,2],
+            'maf':maf, 'ma_samples':ma_samples, 'ma_count':ma_count,
+        }, index=genotype_df.index[mask])
+    return df
+
+
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, prefix,
                 interaction_s=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
