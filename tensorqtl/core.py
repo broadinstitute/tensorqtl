@@ -92,12 +92,12 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
 def impute_mean(genotypes_t):
     """Impute missing genotypes to mean"""
     m = genotypes_t == -1
-    ix = m.nonzero()
+    ix = torch.nonzero(m, as_tuple=True)[0]
     if len(ix) > 0:
         a = genotypes_t.sum(1)
         b = m.sum(1).float()
         mu = (a + b) / (genotypes_t.shape[1] - b)
-        genotypes_t[m] = mu[ix[:,0]]
+        genotypes_t[m] = mu[ix]
 
 
 def center_normalize(M_t, dim=0):
@@ -216,7 +216,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         tstat_g_t = tstat_g_t[m]
         tstat_i_t = tstat_i_t[m]
         tstat_gi_t = tstat_gi_t[m]
-        ix = m.nonzero()  # indexes: [genotype, phenotype]
+        ix = m.nonzero(as_tuple=False)  # indexes: [genotype, phenotype]
         return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], ix
 
 #------------------------------------------------------------------------------
