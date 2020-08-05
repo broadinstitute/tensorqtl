@@ -114,7 +114,7 @@ def main():
             res_df.to_csv(out_file, sep='\t', float_format='%.6g')
         elif args.mode=='cis_nominal':
             if not args.load_split:
-                cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df, args.prefix,
+                cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, args.prefix, covariates_df=covariates_df,
                                 interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
                                 group_s=None, window=args.window, output_dir=args.output_dir,
                                 write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
@@ -126,7 +126,7 @@ def main():
                     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
                     chr_df = cis.map_nominal(genotype_df, variant_df[variant_df['chrom']==chrom],
                                              phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
-                                             covariates_df, args.prefix,
+                                             args.prefix, covariates_df=covariates_df,
                                              interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
                                              group_s=None, window=args.window, output_dir=args.output_dir,
                                              write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)

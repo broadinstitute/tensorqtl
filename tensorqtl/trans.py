@@ -45,7 +45,7 @@ def filter_cis(pairs_df, tss_dict, variant_df, window=5000000):
     return pairs_df.drop(drop_ix)
 
 
-def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
+def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
               return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05,
               alleles=2, return_r2=False, batch_size=20000,
               logger=None, verbose=True):
@@ -55,31 +55,32 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
 
     if logger is None:
         logger = SimpleLogger(verbose=verbose)
-    assert np.all(phenotype_df.columns==covariates_df.index)
 
     variant_ids = genotype_df.index.tolist()
     variant_dict = {i:j for i,j in enumerate(variant_ids)}
     n_variants = len(variant_ids)
     n_samples = phenotype_df.shape[1]
+    dof = n_samples - 2
 
     logger.write('trans-QTL mapping')
     logger.write('  * {} samples'.format(n_samples))
     logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
-    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+    if covariates_df is not None:
+        assert np.all(phenotype_df.columns==covariates_df.index)
+        logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+        residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
+        dof -= covariates_df.shape[1]
+    else:
+        residualizer = None
     logger.write('  * {} variants'.format(n_variants))
     if interaction_s is not None:
         logger.write('  * including interaction term')
 
     phenotypes_t = torch.tensor(phenotype_df.values, dtype=torch.float32).to(device)
-    covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
-    residualizer = Residualizer(covariates_t)
-    del covariates_t
-
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
 
     # calculate correlation threshold for sparse output
-    dof = n_samples - 2 - covariates_df.shape[1]
     if return_sparse:
         tstat_threshold = -stats.t.ppf(pval_threshold/2, dof)
         r_threshold = tstat_threshold / np.sqrt(dof + tstat_threshold**2)
@@ -102,12 +103,12 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
             genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
 
-            r_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, phenotypes_t, residualizer, return_var=True)
+            r_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, phenotypes_t, residualizer=residualizer, return_var=True)
             del genotypes_t
 
             if return_sparse:
                 m = r_t.abs() >= r_threshold
-                ix_t = m.nonzero()  # sparse index
+                ix_t = m.nonzero(as_tuple=False)  # sparse index
                 ix = ix_t.cpu().numpy()
 
                 r_t = r_t.masked_select(m).type(torch.float64)
@@ -209,7 +210,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
                     tstat_g_t = tstat_g_t[m]
                     tstat_i_t = tstat_i_t[m]
                     tstat_gi_t = tstat_gi_t[m]
-                    ix = m.nonzero()  # indexes: [genotype, phenotype]
+                    ix = m.nonzero(as_tuple=False)  # indexes: [genotype, phenotype]
                     maf_t =  maf_t[ix[:,0]]
                     # return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], ix
 
@@ -318,9 +319,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         logger.write('  * {} permutations'.format(nperms))
 
     permutations_t = torch.tensor(permutations, dtype=torch.float32).to(device)
-    covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
-    residualizer = Residualizer(covariates_t)
-    del covariates_t
+    residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
 
     if chr_s is not None:
         start_time = time.time()
@@ -336,7 +335,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
                 genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
                 n_variants += genotypes_t.shape[0]
-                r2_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)
+                r2_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)
                 del genotypes_t
                 m,_ = r2_t.max(0)
                 max_r2_t = torch.max(m, max_r2_t)
@@ -381,7 +380,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
-            r2_t = calculate_corr(genotypes_t, permutations_t, residualizer).pow(2)
+            r2_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)
             del genotypes_t
             m,_ = r2_t.max(0)
             max_r2_t = torch.max(m, max_r2_t)
