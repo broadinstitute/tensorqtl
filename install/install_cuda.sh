@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# install script for PyTorch 1.6 + CUDA 10.2 combination on Ubuntu 18.04
+# install script for PyTorch 1.6 + CUDA 10.2 combination on Ubuntu 18.04 (also works for 20.04)
 # see https://pytorch.org/get-started/locally/
 
 # see https://developer.nvidia.com/cuda-10.2-download-archive?target_os=Linux&target_arch=x86_64&target_distro=Ubuntu&target_version=1804&target_type=deblocal
