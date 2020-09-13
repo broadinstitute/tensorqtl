@@ -1,5 +1,5 @@
 # Dockerfile for tensorQTL
-FROM nvidia/cuda:10.0-cudnn7-runtime-ubuntu18.04
+FROM nvidia/cuda:10.2-cudnn7-runtime-ubuntu18.04
 MAINTAINER Francois Aguet
 
 RUN apt-get update && apt-get install -y software-properties-common && \
@@ -27,16 +27,16 @@ RUN apt-get update && apt-get install -y software-properties-common && \
 
 # htslib
 RUN cd /opt && \
-    wget --no-check-certificate https://github.com/samtools/htslib/releases/download/1.9/htslib-1.9.tar.bz2 && \
-    tar -xf htslib-1.9.tar.bz2 && rm htslib-1.9.tar.bz2 && cd htslib-1.9 && \
+    wget --no-check-certificate https://github.com/samtools/htslib/releases/download/1.10.2/htslib-1.10.2.tar.bz2 && \
+    tar -xf htslib-1.10.2.tar.bz2 && rm htslib-1.10.2.tar.bz2 && cd htslib-1.10.2 && \
     ./configure --enable-libcurl --enable-s3 --enable-plugins --enable-gcs && \
     make && make install && make clean
 
 # bcftools
 RUN cd /opt && \
-    wget --no-check-certificate https://github.com/samtools/bcftools/releases/download/1.9/bcftools-1.9.tar.bz2 && \
-    tar -xf bcftools-1.9.tar.bz2 && rm bcftools-1.9.tar.bz2 && cd bcftools-1.9 && \
-    make && make install && make clean
+    wget --no-check-certificate https://github.com/samtools/bcftools/releases/download/1.10.2/bcftools-1.10.2.tar.bz2 && \
+    tar -xf bcftools-1.10.2.tar.bz2 && rm bcftools-1.10.2.tar.bz2 && cd bcftools-1.10.2 && \
+    ./configure --with-htslib=system && make && make install && make clean
 
 # install R
 ENV DEBIAN_FRONTEND noninteractive
