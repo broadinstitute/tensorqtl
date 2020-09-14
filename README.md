@@ -92,6 +92,9 @@ Load phenotypes and covariates:
 phenotype_df, phenotype_pos_df = tensorqtl.read_phenotype_bed(phenotype_bed_file)
 covariates_df = pd.read_csv(covariates_file, sep='\t', index_col=0).T  # samples x covariates
 ```
+Phenotypes must be provided in BED format (for compatibility with [FastQTL](https://github.com/francois-a/fastqtl)), with a single header line and the first four columns containing: `chr`, `start`, `end`, `phenotype_id`. `end` is assumed to correspond to the TSS (or center of the cis-window). The remaining columns correspond to samples.
+`covariates_file` is assumed to be tab-delimited and in the format `covariates` x `samples`.
+
 Genotypes can be loaded as follows, where `plink_prefix_path` is the path to the VCF in PLINK format:
 ```
 pr = genotypeio.PlinkReader(plink_prefix_path)
@@ -127,6 +130,8 @@ cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
                 interaction_s=interaction_s, maf_threshold_interaction=0.05,
                 group_s=None, run_eigenmt=True, output_dir='.')
 ```
+Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) files for each chromosome, in `${output_dir}/${prefix}.cis_qtl_pairs.${chr}.parquet`, and the top association for each phenotype is saved to `${output_dir}/${prefix}.cis_qtl_top_assoc.txt.gz`. In these files, the columns `b_g`, `b_g_se`, `pval_g` are the effect size, standard error, and p-value of *g* in the model, with matching columns for *i* and *gi*. 
+
 #### *trans*-QTL mapping
 ```
 trans_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, return_sparse=True)
