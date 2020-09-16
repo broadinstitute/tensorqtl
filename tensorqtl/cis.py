@@ -239,11 +239,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
                                                                  maf_threshold_interaction=maf_threshold_interaction)
                     if genotypes_t.shape[0]>0:
-                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
-                                                            residualizer=residualizer, return_sparse=False)
-                        tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         mask = mask_t.cpu().numpy()
                         variant_ids = variant_ids[mask]
+                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
+                                                            residualizer=residualizer, return_sparse=False,
+                                                            variant_ids=variant_ids)
+                        tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         tss_distance = tss_distance[mask]
                         n = len(variant_ids)
 
@@ -312,7 +313,8 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     else:
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
-                                                            residualizer=residualizer, return_sparse=False)
+                                                            residualizer=residualizer, return_sparse=False,
+                                                            variant_ids=variant_ids)
                         tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     px = [phenotype_id]*n
 
@@ -324,7 +326,8 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                             tstat0, slope0, slope_se0, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         else:
                             res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
-                                                                residualizer=residualizer, return_sparse=False)
+                                                                residualizer=residualizer, return_sparse=False,
+                                                                variant_ids=variant_ids)
                             tstat0, b0, b_se0, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
 
                         # find associations that are stronger for current phenotype

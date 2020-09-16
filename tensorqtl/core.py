@@ -5,6 +5,7 @@ import scipy.stats as stats
 import scipy.optimize
 from scipy.special import loggamma
 import sys
+import re
 
 
 output_dtype_dict = {
@@ -133,7 +134,7 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
 
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer=None,
-                                  return_sparse=False, tstat_threshold=None):
+                                  return_sparse=False, tstat_threshold=None, variant_ids=None):
     """
     genotypes_t:   [num_genotypes x num_samples]
     phenotypes_t:   [num_phenotypes x num_samples]
@@ -159,7 +160,14 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
 
     # regression (in float; loss of precision may occur in edge cases)
     X_t = torch.stack([g0_t, i0_t, gi0_t], 2)  # ng x ns x 3
-    Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
+    try:
+        Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
+    except Exception as e:
+        if variant_ids is not None and len(e.args) >= 1:
+            i = int(re.findall('For batch (\d+)', str(e))[0])
+            e.args = (e.args[0] + '\n    Likely problematic variant: {} '.format(variant_ids[i]),) + e.args[1:]
+        raise
+
     # Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))  # ng x 3 x 3
     # p0_tile_t = tf.tile(tf.expand_dims(p0_t, 0), [ng,1,1])  # ng x np x ns
     p0_tile_t = p0_t.unsqueeze(0).expand([ng, *p0_t.shape])  # ng x np x ns
