@@ -116,7 +116,7 @@ def main():
             if not args.load_split:
                 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, args.prefix, covariates_df=covariates_df,
                                 interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                group_s=None, window=args.window, output_dir=args.output_dir,
+                                group_s=None, window=args.window, run_eigenmt=True, output_dir=args.output_dir,
                                 write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
             else:  # load genotypes for each chromosome separately
                 top_df = []
@@ -128,7 +128,7 @@ def main():
                                              phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
                                              args.prefix, covariates_df=covariates_df,
                                              interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                             group_s=None, window=args.window, output_dir=args.output_dir,
+                                             group_s=None, window=args.window, run_eigenmt=True, output_dir=args.output_dir,
                                              write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
                     top_df.append(chr_df)
                 if interaction_s is not None:
