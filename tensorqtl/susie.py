@@ -606,3 +606,24 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
     logger.write('done.')
     return susie_res
+
+
+def get_summary(res_dict, verbose=True):
+    """
+    
+      res_dict: gene_id -> SuSiE results
+    """
+    summary_df = []
+    for n,k in enumerate(res_dict, 1):
+        if verbose:
+            print('\rProcessing {}/{}'.format(n, len(res_dict)), end='')
+        if res_dict[k]['sets']['cs'] is not None:
+            assert res_dict[k]['converged'] == True
+            for c in sorted(res_dict[k]['sets']['cs'], key=lambda x: int(x.replace('L',''))):
+                cs = res_dict[k]['sets']['cs'][c]  # indexes
+                p = res_dict[k]['pip'].rename('pip').iloc[cs].copy().reset_index()
+                p['cs_id'] = c.replace('L','')
+                p.insert(0, 'gene_id', k)
+                summary_df.append(p)
+    summary_df = pd.concat(summary_df, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
+    return summary_df
