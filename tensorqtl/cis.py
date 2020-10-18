@@ -126,6 +126,8 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
             'pval_gi':2*stats.t.cdf(-np.abs(tstat[:,2]), dof), 'b_gi':b[:,2], 'b_gi_se':b_se[:,2],
             'maf':maf, 'ma_samples':ma_samples, 'ma_count':ma_count,
         }, index=genotype_df.index[mask])
+    if df.index.str.startswith('chr').all():  # assume chr_pos_ref_alt_build format
+        df['position'] = df.index.map(lambda x: int(x.split('_')[1]))
     return df
 
 
