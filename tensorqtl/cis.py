@@ -539,7 +539,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             genotypes_t = genotypes_t[:,genotype_ix_t]
 
             # filter monomorphic variants
-            genotypes_t = genotypes_t[~(genotypes_t == genotypes_t[:, [0]]).all(1)]
+            mono_t = (genotypes_t == genotypes_t[:, [0]]).all(1)
+            if mono_t.any():
+                genotypes_t = genotypes_t[~mono_t]
+                genotype_range = genotype_range[~mono_t.cpu()]
+                logger.write('    * WARNING: excluding {} monomorphic variants'.format(mono_t.sum()))
             if genotypes_t.shape[0] == 0:
                 logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
                 continue
@@ -553,7 +557,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
             tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_tss[phenotype_id]
-            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes.shape[0], dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes_t.shape[0], dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
             if beta_approx:
                 res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
             res_df.append(res_s)
@@ -564,7 +568,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             genotypes_t = genotypes_t[:,genotype_ix_t]
 
             # filter monomorphic variants
-            genotypes_t = genotypes_t[~(genotypes_t == genotypes_t[:, [0]]).all(1)]
+            mono_t = (genotypes_t == genotypes_t[:, [0]]).all(1)
+            if mono_t.any():
+                genotypes_t = genotypes_t[~mono_t]
+                genotype_range = genotype_range[~mono_t.cpu()]
+                logger.write('    * WARNING: excluding {} monomorphic variants'.format(mono_t.sum()))
             if genotypes_t.shape[0] == 0:
                 logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
                 continue
@@ -578,7 +586,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
-                buf.append(res + [genotypes.shape[0], phenotype_id])
+                buf.append(res + [genotypes_t.shape[0], phenotype_id])
             res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
             res_df.append(res_s)
 
