@@ -99,7 +99,7 @@ Genotypes can be loaded as follows, where `plink_prefix_path` is the path to the
 ```
 pr = genotypeio.PlinkReader(plink_prefix_path)
 # load genotypes and variants into data frames
-genotype_df = pd.DataFrame(pr.get_all_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
+genotype_df = pr.load_genotypes()
 variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
 ```
 To save memory when using genotypes for a subset of samples, you can specify the samples as follows (this is not strictly necessary, since tensorQTL will select the relevant samples from `genotype_df` otherwise):

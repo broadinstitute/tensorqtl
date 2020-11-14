@@ -114,7 +114,9 @@ def _impute_mean(g, verbose=False):
 
 
 class PlinkReader(object):
-    def __init__(self, plink_prefix_path, select_samples=None, exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.int8):
+    def __init__(self, plink_prefix_path, select_samples=None,
+                 exclude_variants=None, exclude_chrs=None,
+                 verbose=True, dtype=np.int8):
         """
         Class for reading genotypes from PLINK bed files
 
@@ -210,9 +212,10 @@ class PlinkReader(object):
 
 
 def load_genotypes(plink_prefix_path, select_samples=None, dtype=np.int8):
+    """Load all genotypes into a data frame"""
     pr = PlinkReader(plink_prefix_path, select_samples=select_samples, dtype=dtype)
     print('Loading genotypes ... ', end='', flush=True)
-    df = pd.DataFrame(pr.get_all_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
+    df = pr.load_genotypes()
     print('done.', flush=True)
     return df
 
