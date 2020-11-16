@@ -45,6 +45,8 @@ def main():
     # check inputs
     if args.mode=='cis_independent' and (args.cis_output is None or not os.path.exists(args.cis_output)):
         raise ValueError("Output from 'cis' mode must be provided.")
+    if args.interaction is not None and args.mode not in ['cis_nominal', 'trans']:
+        raise ValueError("Interactions are only supported in 'cis_nominal' or 'trans' mode.")
 
     logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.{}.log'.format(args.mode)))
     logger.write('[{}] Running TensorQTL: {}-QTL mapping'.format(datetime.now().strftime("%b %d %H:%M:%S"), args.mode.split('_')[0]))
