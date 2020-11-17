@@ -158,7 +158,7 @@ class PlinkReader(object):
             self.bim.reset_index(drop=True, inplace=True)
             self.bim['i'] = self.bim.index
         self.n_samples = self.fam.shape[0]
-        self.chrs = self.bim['chrom'].unique().tolist()
+        self.chrs = list(self.bim['chrom'].unique())
         self.variant_pos = {i:g['pos'] for i,g in self.bim.set_index('snp')[['chrom', 'pos']].groupby('chrom')}
         self.variant_pos_dict = self.bim.set_index('snp')['pos'].to_dict()
 
