@@ -67,7 +67,7 @@ Conditionally independent *cis*-QTL (as described in [GTEx Consortium, 2017](htt
 ```
 python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} \
     --covariates ${covariates_file} \
-    --cis_results ${cis_results_file} \
+    --cis_output ${cis_output_file} \
     --mode cis_independent
 ```
 
