@@ -623,12 +623,12 @@ def get_summary(res_dict, verbose=True):
     summary_df = []
     for n,k in enumerate(res_dict, 1):
         if verbose:
-            print('\rProcessing {}/{}'.format(n, len(res_dict)), end='')
+            print(f'\rMaking summary {n}/{len(res_dict)}', end='' if n < len(res_dict) else None)
         if res_dict[k]['sets']['cs'] is not None:
             assert res_dict[k]['converged'] == True
             for c in sorted(res_dict[k]['sets']['cs'], key=lambda x: int(x.replace('L',''))):
                 cs = res_dict[k]['sets']['cs'][c]  # indexes
-                p = res_dict[k]['pip'].rename('pip').iloc[cs].copy().reset_index()
+                p = res_dict[k]['pip'].iloc[cs].copy().reset_index()
                 p['cs_id'] = c.replace('L','')
                 p.insert(0, 'gene_id', k)
                 summary_df.append(p)
