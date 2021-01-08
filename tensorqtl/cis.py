@@ -108,7 +108,9 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
     else:
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         if maf_threshold_interaction > 0:
-            interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
+            mask_s = pd.Series(True, index=interaction_s.index)
+            mask_s[interaction_s.sort_values(kind='mergesort').index[:interaction_s.shape[0]//2]] = False
+            interaction_mask_t = torch.BoolTensor(mask_s).to(device)
         else:
             interaction_mask_t = None
 
