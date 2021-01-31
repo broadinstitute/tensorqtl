@@ -20,7 +20,7 @@ def _check_dependency(name):
 
 
 def print_progress(k, n, entity):
-    s = '\r    processing {} {}/{}'.format(entity, k, n)
+    s = f'\r    processing {entity} {k}/{n}'
     if k == n:
         s += '\n'
     sys.stdout.write(s)
@@ -110,7 +110,7 @@ def _impute_mean(g, verbose=False):
         g[i][ix] = np.mean(g[i][~ix])
         n += 1
     if verbose and n>0:
-        print('    imputed at least 1 sample in {}/{} sites'.format(n, g.shape[0]))
+        print(f'    imputed at least 1 sample in {n}/{g.shape[0]} sites')
 
 
 class PlinkReader(object):
@@ -246,7 +246,7 @@ def get_vcf_region(region_str, vcfpath, field='GT', sample_ids=None, select_samp
                 v[ix] = np.mean(v[~ix])
                 n += 1
         if n>0:
-            print('    imputed at least 1 sample in {} sites'.format(n))
+            print(f'    imputed at least 1 sample in {n} sites')
 
     return df, pos_s
 
@@ -355,7 +355,7 @@ class InputGeneratorCis(object):
         # check for constant phenotypes and drop
         m = np.all(phenotype_df.values == phenotype_df.values[:,[0]], 1)
         if m.any():
-            print('    ** dropping {} constant phenotypes'.format(np.sum(m)))
+            print(f'    ** dropping {np.sum(m)} constant phenotypes')
             self.phenotype_df = self.phenotype_df.loc[~m]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[~m]
         self.group_s = None
@@ -374,7 +374,7 @@ class InputGeneratorCis(object):
         self.cis_ranges = {}
         for k,phenotype_id in enumerate(self.phenotype_df.index,1):
             if np.mod(k, 1000) == 0:
-                print('\r  * checking phenotypes: {}/{}'.format(k, self.phenotype_df.shape[0]), end='')
+                print(f'\r  * checking phenotypes: {k}/{self.phenotype_df.shape[0]}', end='' if k != phenotype_df.shape[0] else None)
 
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
@@ -395,7 +395,6 @@ class InputGeneratorCis(object):
             if len(r) > 0:
                 valid_ix.append(phenotype_id)
                 self.cis_ranges[phenotype_id] = r
-        print('\r  * checking phenotypes: {}/{}'.format(k, self.phenotype_df.shape[0]))
         if len(valid_ix) != self.phenotype_df.shape[0]:
             print('    ** dropping {} phenotypes without variants in cis-window'.format(
                   self.phenotype_df.shape[0] - len(valid_ix)))
