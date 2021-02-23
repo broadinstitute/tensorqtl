@@ -134,7 +134,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
-                covariates_df=None, interaction_s=None, maf_threshold_interaction=0.05,
+                covariates_df=None, maf_threshold=0, interaction_s=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
                 output_dir='.', write_top=True, write_stats=True, logger=None, verbose=True):
     """
@@ -171,6 +171,8 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         logger.write('  * including interaction term')
         if maf_threshold_interaction>0:
             logger.write('    * using {:.2f} MAF threshold'.format(maf_threshold_interaction))
+    elif maf_threshold > 0:
+        logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
@@ -237,6 +239,14 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
                 tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
 
+                if maf_threshold > 0:
+                    maf_t = calculate_maf(genotypes_t)
+                    mask_t = maf_t >= maf_threshold
+                    genotypes_t = genotypes_t[mask_t]
+                    mask = mask_t.cpu().numpy().astype(bool)
+                    variant_ids = variant_ids[mask]
+                    tss_distance = tss_distance[mask]
+
                 if interaction_s is None:
                     res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                     tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
@@ -299,6 +309,14 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
                 # assuming that the TSS for all grouped phenotypes is the same
                 tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_ids[0]])
+
+                if maf_threshold > 0:
+                    maf_t = calculate_maf(genotypes_t)
+                    mask_t = maf_t >= maf_threshold
+                    genotypes_t = genotypes_t[mask_t]
+                    mask = mask_t.cpu().numpy().astype(bool)
+                    variant_ids = variant_ids[mask]
+                    tss_distance = tss_distance[mask]
 
                 if interaction_s is not None:
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
@@ -494,7 +512,7 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
 
 
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=None,
-            group_s=None, beta_approx=True, nperm=10000,
+            group_s=None, maf_threshold=0, beta_approx=True, nperm=10000,
             window=1000000, logger=None, seed=None, verbose=True):
     """Run cis-QTL mapping"""
 
@@ -518,6 +536,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         residualizer = None
         dof = phenotype_df.shape[1] - 2
     logger.write('  * {} variants'.format(genotype_df.shape[0]))
+    if maf_threshold > 0:
+        logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
@@ -541,6 +561,14 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
+            impute_mean(genotypes_t)
+
+            if maf_threshold > 0:
+                maf_t = calculate_maf(genotypes_t)
+                mask_t = maf_t >= maf_threshold
+                genotypes_t = genotypes_t[mask_t]
+                mask = mask_t.cpu().numpy().astype(bool)
+                genotype_range = genotype_range[mask]
 
             # filter monomorphic variants
             mono_t = (genotypes_t == genotypes_t[:, [0]]).all(1)
@@ -548,11 +576,10 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 genotypes_t = genotypes_t[~mono_t]
                 genotype_range = genotype_range[~mono_t.cpu()]
                 logger.write('    * WARNING: excluding {} monomorphic variants'.format(mono_t.sum()))
+
             if genotypes_t.shape[0] == 0:
                 logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
                 continue
-
-            impute_mean(genotypes_t)
 
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
 
@@ -565,11 +592,19 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             if beta_approx:
                 res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
             res_df.append(res_s)
-    else:
+    else:  # grouped mode
         for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(verbose=verbose), 1):
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
+            impute_mean(genotypes_t)
+
+            if maf_threshold > 0:
+                maf_t = calculate_maf(genotypes_t)
+                mask_t = maf_t >= maf_threshold
+                genotypes_t = genotypes_t[mask_t]
+                mask = mask_t.cpu().numpy().astype(bool)
+                genotype_range = genotype_range[mask]
 
             # filter monomorphic variants
             mono_t = (genotypes_t == genotypes_t[:, [0]]).all(1)
@@ -577,11 +612,10 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 genotypes_t = genotypes_t[~mono_t]
                 genotype_range = genotype_range[~mono_t.cpu()]
                 logger.write('    * WARNING: excluding {} monomorphic variants'.format(mono_t.sum()))
+
             if genotypes_t.shape[0] == 0:
                 logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
                 continue
-
-            impute_mean(genotypes_t)
 
             # iterate over phenotypes
             buf = []
@@ -602,7 +636,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
 
 def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos_df, covariates_df,
-                    group_s=None, fdr=0.05, fdr_col='qval', nperm=10000, 
+                    group_s=None, maf_threshold=0, fdr=0.05, fdr_col='qval', nperm=10000,
                     window=1000000, logger=None, seed=None, verbose=True):
     """
     Run independent cis-QTL mapping (forward-backward regression)
@@ -642,6 +676,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
         group_dict = group_s.to_dict()
     logger.write('  * {} covariates'.format(covariates_df.shape[1]))
     logger.write('  * {} variants'.format(genotype_df.shape[0]))
+    if maf_threshold > 0:
+        logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
     # print('Significance threshold: {}'.format(signif_threshold))
     phenotype_df = phenotype_df.loc[ix]
     phenotype_pos_df = phenotype_pos_df.loc[ix]
@@ -672,6 +708,13 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
+
+            if maf_threshold > 0:
+                maf_t = calculate_maf(genotypes_t)
+                mask_t = maf_t >= maf_threshold
+                genotypes_t = genotypes_t[mask_t]
+                mask = mask_t.cpu().numpy().astype(bool)
+                genotype_range = genotype_range[mask]
 
             # 1) forward pass
             forward_df = [signif_df.loc[phenotype_id]]  # initialize results with top variant
@@ -738,6 +781,13 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
+
+            if maf_threshold > 0:
+                maf_t = calculate_maf(genotypes_t)
+                mask_t = maf_t >= maf_threshold
+                genotypes_t = genotypes_t[mask_t]
+                mask = mask_t.cpu().numpy().astype(bool)
+                genotype_range = genotype_range[mask]
 
             # 1) forward pass
             forward_df = [signif_df[signif_df['group_id']==group_id].iloc[0]]  # initialize results with top variant
