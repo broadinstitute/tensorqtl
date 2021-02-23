@@ -52,7 +52,7 @@ RUN pip3 install numpy pandas scipy
 RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow torch rpy2 gcsfs
 
 RUN cd /opt && \
-    wget https://github.com/broadinstitute/tensorqtl/archive/v1.0.4.tar.gz && \
-    tar -xf v1.0.4.tar.gz && mv tensorqtl-1.0.4 tensorqtl && \
-    rm v1.0.4.tar.gz
+    wget https://github.com/broadinstitute/tensorqtl/archive/v1.0.5.tar.gz && \
+    tar -xf v1.0.5.tar.gz && mv tensorqtl-1.0.5 tensorqtl && \
+    rm v1.0.5.tar.gz
 RUN pip3 install -e /opt/tensorqtl/
