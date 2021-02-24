@@ -489,7 +489,7 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
     return res_s
 
 
-def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000):
+def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000, beta_approx=True):
     """
     Merge results for grouped phenotypes
 
@@ -505,7 +505,8 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
     variant_id = variant_df.index[var_ix]
     tss_distance = variant_df['pos'].values[var_ix] - tss
     res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
-    res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof*0.25)
+    if beta_approx:
+        res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof*0.25)
     res_s['group_id'] = group_id
     res_s['group_size'] = len(buf)
     return res_s
@@ -625,7 +626,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes_t.shape[0], phenotype_id])
-            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof, group_id, nperm=nperm)
+            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof,
+                                                group_id, nperm=nperm, beta_approx=beta_approx)
             res_df.append(res_s)
 
     res_df = pd.concat(res_df, axis=1, sort=False).T
