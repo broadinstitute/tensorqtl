@@ -48,27 +48,27 @@ def main():
     if args.interaction is not None and args.mode not in ['cis_nominal', 'trans']:
         raise ValueError("Interactions are only supported in 'cis_nominal' or 'trans' mode.")
 
-    logger = SimpleLogger(os.path.join(args.output_dir, args.prefix+'.tensorQTL.{}.log'.format(args.mode)))
-    logger.write('[{}] Running TensorQTL: {}-QTL mapping'.format(datetime.now().strftime("%b %d %H:%M:%S"), args.mode.split('_')[0]))
+    logger = SimpleLogger(os.path.join(args.output_dir, f'{args.prefix}.tensorQTL.{args.mode}.log'))
+    logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Running TensorQTL: {args.mode.split("_")[0]}-QTL mapping')
     if torch.cuda.is_available():
-        logger.write('  * using GPU ({})'.format(torch.cuda.get_device_name(torch.cuda.current_device())))
+        logger.write(f'  * using GPU ({torch.cuda.get_device_name(torch.cuda.current_device())})')
     else:
         logger.write('  * WARNING: using CPU!')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.seed is not None:
-        logger.write('  * using seed {}'.format(args.seed))
+        logger.write(f'  * using seed {args.seed}')
 
     # load inputs
-    logger.write('  * reading phenotypes ({})'.format(args.phenotype_bed))
+    logger.write(f'  * reading phenotypes ({args.phenotype_bed})')
     phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotype_bed)
 
     tss_dict = phenotype_pos_df.T.to_dict()
     if args.covariates is not None:
-        logger.write('  * reading covariates ({})'.format(args.covariates))
+        logger.write(f'  * reading covariates ({args.covariates})')
         covariates_df = pd.read_csv(args.covariates, sep='\t', index_col=0).T
         assert np.all(phenotype_df.columns==covariates_df.index)
     if args.interaction is not None:
-        logger.write('  * reading interaction term ({})'.format(args.interaction))
+        logger.write(f'  * reading interaction term ({args.interaction})')
         interaction_s = pd.read_csv(args.interaction, sep='\t', index_col=0, header=None, squeeze=True)
         assert covariates_df.index.isin(interaction_s.index).all()
         interaction_s = interaction_s.loc[covariates_df.index].astype(np.float32)
@@ -135,7 +135,7 @@ def main():
                     top_df.append(chr_df)
                 if interaction_s is not None:
                     top_df = pd.concat(top_df)
-                    top_df.to_csv(os.path.join(args.output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(args.prefix)),
+                    top_df.to_csv(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl_top_assoc.txt.gz'),
                                   sep='\t', float_format='%.6g')
 
         elif args.mode=='cis_independent':
@@ -152,7 +152,7 @@ def main():
         pval_threshold = args.pval_threshold
         if pval_threshold is None and return_sparse:
             pval_threshold = 1e-5
-            logger.write('  * p-value threshold: {:.2g}'.format(pval_threshold))
+            logger.write(f'  * p-value threshold: {pval_threshold:.2g}')
 
         pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_s,
                                   return_sparse=return_sparse, pval_threshold=pval_threshold,
@@ -169,7 +169,7 @@ def main():
             out_file = os.path.join(args.output_dir, args.prefix+'.trans_qtl_pairs.txt.gz')
             pairs_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
 
-    logger.write('[{}] Finished mapping'.format(datetime.now().strftime("%b %d %H:%M:%S")))
+    logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Finished mapping')
 
 
 if __name__ == '__main__':

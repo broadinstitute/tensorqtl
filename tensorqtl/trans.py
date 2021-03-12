@@ -63,16 +63,16 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
     dof = n_samples - 2
 
     logger.write('trans-QTL mapping')
-    logger.write('  * {} samples'.format(n_samples))
-    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
+    logger.write(f'  * {n_samples} samples')
+    logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     if covariates_df is not None:
         assert np.all(phenotype_df.columns==covariates_df.index)
-        logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+        logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
         dof -= covariates_df.shape[1]
     else:
         residualizer = None
-    logger.write('  * {} variants'.format(n_variants))
+    logger.write(f'  * {n_variants} variants')
     if interaction_s is not None:
         logger.write('  * including interaction term')
 
@@ -127,7 +127,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                 r_t = r_t.type(torch.float64)
                 tstat_t = r_t * torch.sqrt(dof / (1 - r_t.pow(2)))
                 res.append(np.c_[variant_ids, tstat_t.cpu()])
-        logger.write('    elapsed time: {:.2f} min'.format((time.time()-start_time)/60))
+        logger.write(f'    elapsed time: {(time.time()-start_time)/60:.2f} min')
         del phenotypes_t
         del residualizer
 
@@ -149,7 +149,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             pval_df.index.name = 'variant_id'
 
         if maf_threshold > 0:
-            logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+            logger.write(f'  * {n_variants} variants passed MAF >= {maf_threshold:.2f} filtering')
         logger.write('done.')
         return pval_df
 
@@ -229,7 +229,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                         ix0.extend(variant_ids[ix[:,0]].tolist())
                         ix1.extend(phenotype_df.index[ix[:,1]].tolist())
 
-            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+            logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
 
             # concatenate
             pval_g =  2*stats.t.cdf(-np.abs(np.concatenate(tstat_g_list)), dof)
@@ -255,7 +255,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                 mask = mask_t.cpu().numpy()
                 variant_ids = variant_ids[mask.astype(bool)]
                 output_list.append(res + [variant_ids])
-            logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+            logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
 
             # concatenate outputs
             tstat = np.concatenate([i[0] for i in output_list])
@@ -304,9 +304,9 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
     dof = n_samples - 2 - covariates_df.shape[1]
 
     logger.write('trans-QTL mapping (permutations)')
-    logger.write('  * {} samples'.format(n_samples))
-    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
-    logger.write('  * {} variants'.format(n_variants))
+    logger.write(f'  * {n_samples} samples')
+    logger.write(f'  * {covariates_df.shape[1]} covariates')
+    logger.write(f'  * {n_variants} variants')
 
     if permutations is None:  # generate permutations assuming normal distribution
         q = stats.norm.ppf(np.arange(1,n_samples+1)/(n_samples+1))
@@ -318,7 +318,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
     else:
         assert permutations.shape[1]==n_samples
         nperms = permutations.shape[0]
-        logger.write('  * {} permutations'.format(nperms))
+        logger.write(f'  * {nperms} permutations')
 
     permutations_t = torch.tensor(permutations, dtype=torch.float32).to(device)
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
@@ -342,9 +342,9 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
                 m,_ = r2_t.max(0)
                 max_r2_t = torch.max(m, max_r2_t)
             chr_max_r2[chrom] = max_r2_t.cpu()
-        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+        logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
         if maf_threshold > 0:
-            logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+            logger.write(f'  * {n_variants} variants passed MAF >= {maf_threshold:.2f} filtering')
         chr_max_r2 = pd.DataFrame(chr_max_r2)
 
         # leave-one-out max
@@ -386,9 +386,9 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
             del genotypes_t
             m,_ = r2_t.max(0)
             max_r2_t = torch.max(m, max_r2_t)
-        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+        logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
         if maf_threshold > 0:
-            logger.write('  * {} variants passed MAF >= {:.2f} filtering'.format(n_variants, maf_threshold))
+            logger.write(f'  * {n_variants} variants passed MAF >= {maf_threshold:.2f} filtering')
         max_r2 = max_r2_t.cpu().numpy().astype(np.float64)
         tstat = np.sqrt( dof*max_r2 / (1-max_r2) )
         minp_empirical = 2*stats.t.cdf(-np.abs(tstat), dof)

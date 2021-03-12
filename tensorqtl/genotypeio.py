@@ -94,7 +94,7 @@ def _get_field_ix(line, field):
     """Get position of field ('GT' or 'DS') in FORMAT"""
     fmt = line[8].split(':')
     if field not in fmt:
-        raise ValueError('FORMAT field does not contain {}'.format(field))
+        raise ValueError(f'FORMAT field does not contain {field}')
     return fmt.index(field)
 
 #------------------------------------------------------------------------------
@@ -222,7 +222,7 @@ def load_genotypes(plink_prefix_path, select_samples=None, dtype=np.int8):
 
 def get_vcf_region(region_str, vcfpath, field='GT', sample_ids=None, select_samples=None, impute_missing=True):
     """Load VCF region (str: 'chr:start-end') as DataFrame (requires tabix)"""
-    s = subprocess.check_output('tabix {} {}'.format(vcfpath, region_str), shell=True)
+    s = subprocess.check_output(f'tabix {vcfpath} {region_str}', shell=True)
     s = s.decode().strip().split('\n')
     s = [i.split('\t') for i in s]
 
@@ -259,7 +259,7 @@ def get_vcf_variants(variant_ids, vcfpath, field='GT', sample_ids=None):
         df['pos'] = df['pos'].astype(int)
         df = df.sort_values(['chr', 'pos'])
         df.to_csv(regions_file.name, sep='\t', index=False, header=False)
-        s = subprocess.check_output('tabix {} --regions {}'.format(vcfpath, regions_file.name), shell=True)
+        s = subprocess.check_output(f'tabix {vcfpath} --regions {regions_file.name}', shell=True)
     s = s.decode().strip().split('\n')
     s = [i.split('\t') for i in s]
 

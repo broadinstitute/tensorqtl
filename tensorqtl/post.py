@@ -31,19 +31,19 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
         logger = SimpleLogger()
 
     logger.write('Computing q-values')
-    logger.write('  * Number of phenotypes tested: {}'.format(res_df.shape[0]))
-    logger.write('  * Correlation between Beta-approximated and empirical p-values: : {:.4f}'.format(
-        stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]))
+    logger.write(f'  * Number of phenotypes tested: {res_df.shape[0]}')
+    r = stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]
+    logger.write(f'  * Correlation between Beta-approximated and empirical p-values: : {r:.4f}')
 
     # calculate q-values
     if qvalue_lambda is None:
         qval, pi0 = rfunc.qvalue(res_df['pval_beta'])
     else:
-        logger.write('  * Calculating q-values with lambda = {:.3f}'.format(qvalue_lambda))
+        logger.write(f'  * Calculating q-values with lambda = {qvalue_lambda:.3f}')
         qval, pi0 = rfunc.qvalue(res_df['pval_beta'], qvalue_lambda)
     res_df['qval'] = qval
-    logger.write('  * Proportion of significant phenotypes (1-pi0): {:.2f}'.format(1 - pi0))
-    logger.write('  * QTL phenotypes @ FDR {:.2f}: {}'.format(fdr, np.sum(res_df['qval']<=fdr)))
+    logger.write(f'  * Proportion of significant phenotypes (1-pi0): {1-pi0:.2f}')
+    logger.write(f"  * QTL phenotypes @ FDR {fdr:.2f}: {(res_df['qval'] <= fdr).sum()}")
 
     # determine global min(p) significance threshold and calculate nominal p-value threshold for each gene
     lb = res_df.loc[res_df['qval']<=fdr, 'pval_beta'].sort_values()
@@ -56,7 +56,7 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
             pthreshold = (lb+ub)/2
         else:
             pthreshold = lb
-        logger.write('  * min p-value threshold @ FDR {}: {:.6g}'.format(fdr, pthreshold))
+        logger.write(f'  * min p-value threshold @ FDR {fdr}: {pthreshold:.6g}')
         res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
@@ -220,7 +220,7 @@ def get_significant_pairs(res_df, nominal_prefix, fdr=0.05):
     chroms = sorted(nominal_files.keys(), key=lambda x: int(x.replace('chr','').replace('X','100')))
     signif_df = []
     for k,c in enumerate(chroms, 1):
-        print('  * parsing significant variant-phenotype pairs for chr. {}/{}'.format(k, len(chroms)), end='\r', flush=True)
+        print(f'  * parsing significant variant-phenotype pairs for chr. {k}/{len(chroms)}', end='\r', flush=True)
         nominal_df = pd.read_parquet(nominal_files[c])
         nominal_df = nominal_df[nominal_df['phenotype_id'].isin(signif_phenotype_ids)]
 

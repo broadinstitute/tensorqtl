@@ -136,9 +136,9 @@ def run_eigenmt(genotype_df, variant_df, phenotype_df, phenotype_pos_df, interac
     logger.write('eigenMT: estimating number of independent variants tested for each phenotype')
 
     logger.write('cis-QTL mapping: empirical p-values for phenotypes')
-    logger.write('  * {} samples'.format(phenotype_df.shape[1]))
-    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
-    logger.write('  * {} variants'.format(genotype_df.shape[0]))
+    logger.write(f'  * {phenotype_df.shape[1]} samples')
+    logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
+    logger.write(f'  * {genotype_df.shape[0]} variants')
 
     if interaction_s is not None and maf_threshold > 0:
         interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
@@ -166,7 +166,7 @@ def run_eigenmt(genotype_df, variant_df, phenotype_df, phenotype_pos_df, interac
 
         m_eff[phenotype_id] = compute_tests(genotypes_t, var_thresh=var_thresh, variant_window=variant_window)
 
-    logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+    logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
     return pd.Series(m_eff)
 
 

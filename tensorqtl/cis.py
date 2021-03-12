@@ -155,22 +155,22 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         group_dict = group_s.to_dict()
 
     logger.write('cis-QTL mapping: nominal associations for all variant-phenotype pairs')
-    logger.write('  * {} samples'.format(phenotype_df.shape[1]))
-    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
+    logger.write(f'  * {phenotype_df.shape[1]} samples')
+    logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     if covariates_df is not None:
         assert np.all(phenotype_df.columns==covariates_df.index)
-        logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+        logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
         dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
     else:
         residualizer = None
         dof = phenotype_df.shape[1] - 2
-    logger.write('  * {} variants'.format(variant_df.shape[0]))
+    logger.write(f'  * {variant_df.shape[0]} variants')
     if interaction_s is not None:
         assert np.all(interaction_s.index==phenotype_df.columns)
         logger.write('  * including interaction term')
         if maf_threshold_interaction>0:
-            logger.write('    * using {:.2f} MAF threshold'.format(maf_threshold_interaction))
+            logger.write(f'    * using {maf_threshold_interaction:.2f} MAF threshold')
     elif maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
 
@@ -193,7 +193,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
     k = 0
     logger.write('  * Computing associations')
     for chrom in igc.chrs:
-        logger.write('    Mapping chromosome {}'.format(chrom))
+        logger.write(f'    Mapping chromosome {chrom}')
         # allocate arrays
         n = 0
         if group_s is None:
@@ -407,7 +407,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
                 start += n  # update pointer
 
-        logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+        logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
 
         # convert to dataframe, compute p-values and write current chromosome
         if start < len(chr_res['maf']):
@@ -425,7 +425,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
                 chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
             print('    * writing output')
-            chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.{}.parquet'.format(prefix, chrom)))
+            chr_res_df.to_parquet(os.path.join(output_dir, f'{prefix}.cis_qtl_pairs.{chrom}.parquet'))
 
     if interaction_s is not None and len(best_assoc) > 0:
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
@@ -440,7 +440,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 best_assoc['pval_emt'] = np.minimum(best_assoc['num_phenotypes']*best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
             best_assoc['pval_adj_bh'] = eigenmt.padjust_bh(best_assoc['pval_emt'])
         if write_top:
-            best_assoc.to_csv(os.path.join(output_dir, '{}.cis_qtl_top_assoc.txt.gz'.format(prefix)),
+            best_assoc.to_csv(os.path.join(output_dir, f'{prefix}.cis_qtl_top_assoc.txt.gz'),
                               sep='\t', float_format='%.6g')
         else:
             return best_assoc
@@ -523,20 +523,20 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         logger = SimpleLogger()
 
     logger.write('cis-QTL mapping: empirical p-values for phenotypes')
-    logger.write('  * {} samples'.format(phenotype_df.shape[1]))
-    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
+    logger.write(f'  * {phenotype_df.shape[1]} samples')
+    logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     if group_s is not None:
-        logger.write('  * {} phenotype groups'.format(len(group_s.unique())))
+        logger.write(f'  * {len(group_s.unique())} phenotype groups')
         group_dict = group_s.to_dict()
     if covariates_df is not None:
         assert np.all(phenotype_df.columns==covariates_df.index)
-        logger.write('  * {} covariates'.format(covariates_df.shape[1]))
+        logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
         dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
     else:
         residualizer = None
         dof = phenotype_df.shape[1] - 2
-    logger.write('  * {} variants'.format(genotype_df.shape[0]))
+    logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
 
@@ -547,7 +547,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     n_samples = phenotype_df.shape[1]
     ix = np.arange(n_samples)
     if seed is not None:
-        logger.write('  * using seed {}'.format(seed))
+        logger.write(f'  * using seed {seed}')
         np.random.seed(seed)
     permutation_ix_t = torch.LongTensor(np.array([np.random.permutation(ix) for i in range(nperm)])).to(device)
 
@@ -576,10 +576,10 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             if mono_t.any():
                 genotypes_t = genotypes_t[~mono_t]
                 genotype_range = genotype_range[~mono_t.cpu()]
-                logger.write('    * WARNING: excluding {} monomorphic variants'.format(mono_t.sum()))
+                logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
 
             if genotypes_t.shape[0] == 0:
-                logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
+                logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
                 continue
 
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
@@ -612,10 +612,10 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             if mono_t.any():
                 genotypes_t = genotypes_t[~mono_t]
                 genotype_range = genotype_range[~mono_t.cpu()]
-                logger.write('    * WARNING: excluding {} monomorphic variants'.format(mono_t.sum()))
+                logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
 
             if genotypes_t.shape[0] == 0:
-                logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
+                logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
                 continue
 
             # iterate over phenotypes
@@ -632,7 +632,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
     res_df = pd.concat(res_df, axis=1, sort=False).T
     res_df.index.name = 'phenotype_id'
-    logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+    logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')
     logger.write('done.')
     return res_df.astype(output_dtype_dict).infer_objects()
 
@@ -669,18 +669,17 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
         ix = group_s[phenotype_df.index].loc[group_s[phenotype_df.index].isin(signif_df['group_id'])].index
 
     logger.write('cis-QTL mapping: conditionally independent variants')
-    logger.write('  * {} samples'.format(phenotype_df.shape[1]))
+    logger.write(f'  * {phenotype_df.shape[1]} samples')
     if group_s is None:
-        logger.write('  * {}/{} significant phenotypes'.format(signif_df.shape[0], cis_df.shape[0]))
+        logger.write(f'  * {signif_df.shape[0]}/{cis_df.shape[0]} significant phenotypes')
     else:
-        logger.write('  * {}/{} significant groups'.format(signif_df.shape[0], cis_df.shape[0]))
-        logger.write('    {}/{} phenotypes'.format(len(ix), phenotype_df.shape[0]))
+        logger.write(f'  * {signif_df.shape[0]}/{cis_df.shape[0]} significant groups')
+        logger.write(f'    {len(ix)}/{phenotype_df.shape[0]} phenotypes')
         group_dict = group_s.to_dict()
-    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
-    logger.write('  * {} variants'.format(genotype_df.shape[0]))
+    logger.write(f'  * {covariates_df.shape[1]} covariates')
+    logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
-    # print('Significance threshold: {}'.format(signif_threshold))
     phenotype_df = phenotype_df.loc[ix]
     phenotype_pos_df = phenotype_pos_df.loc[ix]
 
@@ -693,7 +692,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     n_samples = phenotype_df.shape[1]
     ix = np.arange(n_samples)
     if seed is not None:
-        logger.write('  * using seed {}'.format(seed))
+        logger.write(f'  * using seed {seed}')
         np.random.seed(seed)
     permutation_ix_t = torch.LongTensor(np.array([np.random.permutation(ix) for i in range(nperm)])).to(device)
 
@@ -856,6 +855,6 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
     res_df = pd.concat(res_df, axis=0, sort=False)
     res_df.index.name = 'phenotype_id'
-    logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+    logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')
     logger.write('done.')
     return res_df.reset_index().astype(output_dtype_dict)
