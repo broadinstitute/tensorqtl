@@ -629,7 +629,7 @@ def get_summary(res_dict, verbose=True):
                 cs = res_dict[k]['sets']['cs'][c]  # indexes
                 p = res_dict[k]['pip'].iloc[cs].copy().reset_index()
                 p['cs_id'] = c.replace('L','')
-                p.insert(0, 'gene_id', k)
+                p.insert(0, 'phenotype_id', k)
                 summary_df.append(p)
     summary_df = pd.concat(summary_df, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
     return summary_df
