@@ -159,7 +159,7 @@ def neg_loglik_logscale(lV, betahat, shat2, prior_weights):
 
 
 def optimize_prior_variance(optimize_V, betahat, shat2, prior_weights,
-                            alpha=None, post_mean2=None, V_init=None, 
+                            alpha=None, post_mean2=None, V_init=None,
                             check_null_threshold=0):
     """"""
     # EM solution
@@ -226,7 +226,7 @@ def single_effect_regression(Y_t, X_t, xattr, V, residual_variance=1, prior_weig
         print(post_var.device)
         print(post_var)
         print(Xty.device)
-        
+
     post_mean2 = post_var + post_mean**2  # second moment
     # BF for single effect model
     lbf_model = maxlbf + torch.log(weighted_sum_w)
@@ -234,7 +234,7 @@ def single_effect_regression(Y_t, X_t, xattr, V, residual_variance=1, prior_weig
     loglik = lbf_model + torch.distributions.Normal(0, torch.sqrt(residual_variance)).log_prob(Y_t).sum()
 
     # if optimize_V == 'EM':
-    V = optimize_prior_variance(optimize_V, betahat, shat2, prior_weights, alpha, 
+    V = optimize_prior_variance(optimize_V, betahat, shat2, prior_weights, alpha,
                                 post_mean2, check_null_threshold=check_null_threshold)
 
     return {
@@ -251,7 +251,7 @@ def single_effect_regression(Y_t, X_t, xattr, V, residual_variance=1, prior_weig
 def update_each_effect(X_t, xattr, Y_t, s, estimate_prior_variance=False,
                        estimate_prior_method='EM', check_null_threshold=0):
     """
-    
+
     """
     if not estimate_prior_variance:
         estimate_prior_method = 'none'
@@ -424,7 +424,7 @@ def susie_get_cs(res, X=None, Xcorr=None, coverage=0.95, min_abs_corr=0.5,
 
     # compute and filter by "purity"
     if Xcorr is None and X is None:
-        cs_dict = {'L{}'.format(k+1):cs[k] for k,i in enumerate(include_mask) if i}
+        cs_dict = {f'L{k+1}':cs[k] for k,i in enumerate(include_mask) if i}
         return {'cs':cs_dict, 'coverage':coverage}
     else:
         cs = [cs[k] for k,i in enumerate(include_mask) if i]
@@ -449,7 +449,7 @@ def susie_get_cs(res, X=None, Xcorr=None, coverage=0.95, min_abs_corr=0.5,
 
             # subset by purity
             purity = purity.iloc[is_pure]
-            rownames = ['L{}'.format(i+1) for i in include_idx[is_pure]]
+            rownames = [f'L{i+1}' for i in include_idx[is_pure]]
             purity.index = rownames
 
             # re-order CS list and purity rows based on purity
@@ -503,7 +503,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
                                check_null_threshold=0)
         elbo[i] = get_objective(X_t, xattr, y_t, s)
         if verbose:
-            print('Objective (iter {}): {}'.format(i, elbo[i]))
+            print(f'Objective (iter {i}): {elbo[i]}')
         if (elbo[i] - elbo[i-1]) < tol:
             s['converged'] = True
             break
@@ -513,13 +513,13 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
             if s['sigma2'] > residual_variance_upperbound:
                 s['sigma2'] = residual_variance_upperbound
             if verbose:
-                print('Objective (iter {}): {}'.format(i, get_objective(X_t, xattr, y_t, s)))
+                print(f'Objective (iter {i}): {get_objective(X_t, xattr, y_t, s)}')
 
     s['elbo'] = elbo[1:i+1]  # Remove first (infinite) entry, and trailing NAs.
     s['niter'] = i
 
     if 'converged' not in s:
-        print("WARNING: IBSS algorithm did not converge in {} iterations!".format(max_iter))
+        print(f"WARNING: IBSS algorithm did not converge in {max_iter} iterations!")
         s['converged'] = False
 
     if intercept:
@@ -543,7 +543,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
 
 def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         L=10, scaled_prior_variance=0.2,
-        estimate_residual_variance=True, 
+        estimate_residual_variance=True,
         estimate_prior_variance=True, tol=1e-3,
         coverage=0.95, min_abs_corr=0.5,
         max_iter=100, window=1000000, logger=None, verbose=True):
@@ -557,10 +557,10 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         logger = SimpleLogger()
 
     logger.write('SuSiE fine-mapping')
-    logger.write('  * {} samples'.format(phenotype_df.shape[1]))
-    logger.write('  * {} phenotypes'.format(phenotype_df.shape[0]))
-    logger.write('  * {} covariates'.format(covariates_df.shape[1]))
-    logger.write('  * {} variants'.format(variant_df.shape[0]))
+    logger.write(f'  * {phenotype_df.shape[1]} samples')
+    logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
+    logger.write(f'  * {covariates_df.shape[1]} covariates')
+    logger.write(f'  * {variant_df.shape[0]} variants')
 
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
 
@@ -583,7 +583,7 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         # filter monomorphic variants
         # genotypes_t = genotypes_t[~(genotypes_t == genotypes_t[:, [0]]).all(1)]
         # if genotypes_t.shape[0] == 0:
-        #     logger.write('WARNING: skipping {} (no valid variants)'.format(phenotype_id))
+        #     logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
         #     continue
 
         impute_mean(genotypes_t)
@@ -609,14 +609,14 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         res['pip'] = pd.DataFrame({'pip':res['pip'], 'maf':maf_t.cpu().numpy()}, index=variant_ids)
         susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
 
-    logger.write('  Time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
+    logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')
     logger.write('done.')
     return susie_res
 
 
 def get_summary(res_dict, verbose=True):
     """
-    
+
       res_dict: gene_id -> SuSiE results
     """
     summary_df = []
@@ -629,7 +629,7 @@ def get_summary(res_dict, verbose=True):
                 cs = res_dict[k]['sets']['cs'][c]  # indexes
                 p = res_dict[k]['pip'].iloc[cs].copy().reset_index()
                 p['cs_id'] = c.replace('L','')
-                p.insert(0, 'phenotype_id', k)
+                p.insert(0, 'gene_id', k)
                 summary_df.append(p)
     summary_df = pd.concat(summary_df, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
     return summary_df
