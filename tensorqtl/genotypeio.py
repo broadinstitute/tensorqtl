@@ -114,9 +114,8 @@ def _impute_mean(g, verbose=False):
 
 
 class PlinkReader(object):
-    def __init__(self, plink_prefix_path, select_samples=None,
-                 exclude_variants=None, exclude_chrs=None,
-                 verbose=True, dtype=np.int8):
+    def __init__(self, plink_prefix_path, select_samples=None, include_variants=None,
+                 exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.int8):
         """
         Class for reading genotypes from PLINK bed files
 
@@ -145,6 +144,12 @@ class PlinkReader(object):
             self.fam = self.fam.loc[ix]
             self.bed = self.bed[:,ix]
             self.sample_ids = self.fam['iid'].tolist()
+        if include_variants is not None:
+            m = self.bim['snp'].isin(include_variants).values
+            self.bed = self.bed[m,:]
+            self.bim = self.bim[m]
+            self.bim.reset_index(drop=True, inplace=True)
+            self.bim['i'] = self.bim.index
         if exclude_variants is not None:
             m = ~self.bim['snp'].isin(exclude_variants).values
             self.bed = self.bed[m,:]
