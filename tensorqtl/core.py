@@ -18,8 +18,7 @@ output_dtype_dict = {
     'tss_distance':np.int32,
     'ma_samples':np.int32,
     'ma_count':np.int32,
-    'maf':np.float32,
-    'ref_factor':np.int32,
+    'af':np.float32,
     'pval_nominal':np.float64,
     'slope':np.float32,
     'slope_se':np.float32,
@@ -68,15 +67,16 @@ def calculate_maf(genotype_t, alleles=2):
     return torch.where(af_t > 0.5, 1 - af_t, af_t)
 
 
-def filter_maf(genotypes_t, variant_ids, maf_threshold):
+def filter_maf(genotypes_t, variant_ids, maf_threshold, alleles=2):
     """Calculate MAF and filter genotypes that don't pass threshold"""
-    maf_t = calculate_maf(genotypes_t)
+    af_t = genotypes_t.sum(1) / (alleles * genotypes_t.shape[1])
+    maf_t = torch.where(af_t > 0.5, 1 - af_t, af_t)
     if maf_threshold > 0:
         mask_t = maf_t >= maf_threshold
         genotypes_t = genotypes_t[mask_t]
         variant_ids = variant_ids[mask_t.cpu().numpy().astype(bool)]
-        maf_t = maf_t[mask_t]
-    return genotypes_t, variant_ids, maf_t
+        af_t = af_t[mask_t]
+    return genotypes_t, variant_ids, af_t
 
 
 def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_interaction=0.05):
@@ -200,21 +200,20 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     # calculate MAF
     n2 = 2*ns
     af_t = genotypes_t.sum(1) / n2
-    ix_t = af_t <= 0.5
-    maf_t = torch.where(ix_t, af_t, 1 - af_t)
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     if not return_sparse:
         # calculate pval
         # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))  # (ng x 3 x np)
 
         # calculate MA samples and counts
+        ix_t = af_t <= 0.5
         m = genotypes_t > 0.5
         a = m.sum(1).int()
         b = (genotypes_t < 1.5).sum(1).int()
         ma_samples_t = torch.where(ix_t, a, b)
         a = (genotypes_t * m.float()).sum(1).round().int()  # round for missing/imputed genotypes
         ma_count_t = torch.where(ix_t, a, n2-a)
-        return tstat_t, b_t, b_se_t, maf_t, ma_samples_t, ma_count_t
+        return tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
 
     else:  # sparse output
         tstat_g_t =  tstat_t[:,0,:]  # genotypes x phenotypes
@@ -225,7 +224,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         tstat_i_t = tstat_i_t[m]
         tstat_gi_t = tstat_gi_t[m]
         ix = m.nonzero(as_tuple=False)  # indexes: [genotype, phenotype]
-        return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], ix
+        return tstat_g_t, tstat_i_t, tstat_gi_t, af_t[ix[:,0]], ix
 
 #------------------------------------------------------------------------------
 #  Functions for beta-approximating empirical p-values

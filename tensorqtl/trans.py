@@ -100,7 +100,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             # filter by MAF
             genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
-            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
+            genotypes_t, variant_ids, af_t = filter_maf(genotypes_t, variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
 
             r_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, phenotypes_t, residualizer=residualizer, return_var=True)
@@ -121,7 +121,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                 res.append(np.c_[
                     variant_ids[ix[:,0]], phenotype_df.index[ix[:,1]],
                     tstat_t.cpu(), b_t.cpu(), b_se_t.cpu(),
-                    r2_t.float().cpu(), maf_t[ix_t[:,0]].cpu()
+                    r2_t.float().cpu(), af_t[ix_t[:,0]].cpu()
                 ])
             else:
                 r_t = r_t.type(torch.float64)
@@ -135,12 +135,12 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
         res = np.concatenate(res)
         if return_sparse:
             res[:,2] = 2*stats.t.cdf(-np.abs(res[:,2].astype(np.float64)), dof)
-            pval_df = pd.DataFrame(res, columns=['variant_id', 'phenotype_id', 'pval', 'b', 'b_se', 'r2', 'maf'])
+            pval_df = pd.DataFrame(res, columns=['variant_id', 'phenotype_id', 'pval', 'b', 'b_se', 'r2', 'af'])
             pval_df['pval'] = pval_df['pval'].astype(np.float64)
             pval_df['b'] = pval_df['b'].astype(np.float32)
             pval_df['b_se'] = pval_df['b_se'].astype(np.float32)
             pval_df['r2'] = pval_df['r2'].astype(np.float32)
-            pval_df['maf'] = pval_df['maf'].astype(np.float32)
+            pval_df['af'] = pval_df['af'].astype(np.float32)
             if not return_r2:
                 pval_df.drop('r2', axis=1, inplace=True)
         else:
@@ -173,7 +173,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             tstat_g_list = []
             tstat_i_list = []
             tstat_gi_list = []
-            maf_list = []
+            af_list = []
             ix0 = []
             ix1 = []
             for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
@@ -184,9 +184,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                 if genotypes_t.shape[0] > 0:
                     ng, ns = genotypes_t.shape
 
-                    # calculate MAF
+                    # calculate allele frequency
                     af_t = genotypes_t.sum(1) / (2*ns)
-                    maf_t = torch.where(af_t<=0.5, af_t, 1 - af_t)
 
                     # centered inputs
                     g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)
@@ -213,11 +212,10 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                     tstat_i_t = tstat_i_t[m]
                     tstat_gi_t = tstat_gi_t[m]
                     ix = m.nonzero(as_tuple=False)  # indexes: [genotype, phenotype]
-                    maf_t =  maf_t[ix[:,0]]
-                    # return tstat_g_t, tstat_i_t, tstat_gi_t, maf_t[ix[:,0]], ix
+                    af_t =  af_t[ix[:,0]]
 
-                    res = [tstat_g_t, tstat_i_t, tstat_gi_t, maf_t, ix]
-                    tstat_g, tstat_i, tstat_gi, maf, ix = [i.cpu().numpy() for i in res]
+                    res = [tstat_g_t, tstat_i_t, tstat_gi_t, af_t, ix]
+                    tstat_g, tstat_i, tstat_gi, af, ix = [i.cpu().numpy() for i in res]
                     mask = mask_t.cpu().numpy()
                     # convert sparse indexes
                     if len(ix)>0:
@@ -225,7 +223,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                         tstat_g_list.append(tstat_g)
                         tstat_i_list.append(tstat_i)
                         tstat_gi_list.append(tstat_gi)
-                        maf_list.append(maf)
+                        af_list.append(af)
                         ix0.extend(variant_ids[ix[:,0]].tolist())
                         ix1.extend(phenotype_df.index[ix[:,1]].tolist())
 
@@ -235,11 +233,11 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             pval_g =  2*stats.t.cdf(-np.abs(np.concatenate(tstat_g_list)), dof)
             pval_i =  2*stats.t.cdf(-np.abs(np.concatenate(tstat_i_list)), dof)
             pval_gi = 2*stats.t.cdf(-np.abs(np.concatenate(tstat_gi_list)), dof)
-            maf = np.concatenate(maf_list)
+            af = np.concatenate(af_list)
 
-            pval_df = pd.DataFrame(np.c_[ix0, ix1, pval_g, pval_i, pval_gi, maf],
-                                   columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'maf']
-                                   ).astype({'pval_g':np.float64, 'pval_i':np.float64, 'pval_gi':np.float64, 'maf':np.float32})
+            pval_df = pd.DataFrame(np.c_[ix0, ix1, pval_g, pval_i, pval_gi, af],
+                                   columns=['variant_id', 'phenotype_id', 'pval_g', 'pval_i', 'pval_gi', 'af']
+                                   ).astype({'pval_g':np.float64, 'pval_i':np.float64, 'pval_gi':np.float64, 'af':np.float32})
             return pval_df
         else:  # dense output
             output_list = []
@@ -250,7 +248,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                                                              maf_threshold_interaction=maf_threshold)
                 res = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
                                                     return_sparse=return_sparse)
-                # res: tstat, b, b_se, maf, ma_samples, ma_count
+                # res: tstat, b, b_se, af, ma_samples, ma_count
                 res = [i.cpu().numpy() for i in res]
                 mask = mask_t.cpu().numpy()
                 variant_ids = variant_ids[mask.astype(bool)]
@@ -262,7 +260,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             pval = 2*stats.t.cdf(-np.abs(tstat), dof)
             b = np.concatenate([i[1] for i in output_list])
             b_se = np.concatenate([i[2] for i in output_list])
-            maf = np.concatenate([i[3] for i in output_list])
+            af = np.concatenate([i[3] for i in output_list])
             ma_samples = np.concatenate([i[4] for i in output_list])
             ma_count = np.concatenate([i[5] for i in output_list])
             variant_ids = np.concatenate([i[6] for i in output_list])
@@ -270,10 +268,10 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             pval_g_df = pd.DataFrame(pval[:,0,:], index=variant_ids, columns=phenotype_df.index)
             pval_i_df = pd.DataFrame(pval[:,1,:], index=variant_ids, columns=phenotype_df.index)
             pval_gi_df = pd.DataFrame(pval[:,2,:], index=variant_ids, columns=phenotype_df.index)
-            maf_s = pd.Series(maf, index=variant_ids, name='maf').astype(np.float32)
-            ma_samples_s = pd.Series(ma_samples, index=variant_ids, name='maf').astype(np.int32)
-            ma_count_s = pd.Series(ma_count, index=variant_ids, name='maf').astype(np.int32)
-            return pval_g_df, pval_i_df, pval_gi_df, maf_s, ma_samples_s, ma_count_s
+            af_s = pd.Series(af, index=variant_ids, name='af').astype(np.float32)
+            ma_samples_s = pd.Series(ma_samples, index=variant_ids, name='ma_samples').astype(np.int32)
+            ma_count_s = pd.Series(ma_count, index=variant_ids, name='ma_counts').astype(np.int32)
+            return pval_g_df, pval_i_df, pval_gi_df, af_s, ma_samples_s, ma_count_s
 
 
 def map_permutations(genotype_df, covariates_df, permutations=None,
@@ -335,7 +333,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
             max_r2_t = torch.FloatTensor(nperms).fill_(0).to(device)
             for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(chrom=chrom, verbose=verbose, enum_start=k+1), k+1):
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-                genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
+                genotypes_t, _, _ = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
                 n_variants += genotypes_t.shape[0]
                 r2_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)
                 del genotypes_t
@@ -380,7 +378,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         n_variants = 0
         for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-            genotypes_t, variant_ids, maf_t = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
+            genotypes_t, _, _ = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
             r2_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)
             del genotypes_t

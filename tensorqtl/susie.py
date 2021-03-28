@@ -599,14 +599,9 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
                     estimate_prior_variance=estimate_prior_variance,
                     tol=tol, max_iter=max_iter)
 
-        # calculate MAF
-        n2 = 2 * genotypes_t.shape[1]
-        af_t = genotypes_t.sum(1) / n2
-        ix_t = af_t <= 0.5
-        maf_t = torch.where(ix_t, af_t, 1 - af_t)
-
+        af_t = genotypes_t.sum(1) / (2 * genotypes_t.shape[1])
         variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
-        res['pip'] = pd.DataFrame({'pip':res['pip'], 'maf':maf_t.cpu().numpy()}, index=variant_ids)
+        res['pip'] = pd.DataFrame({'pip':res['pip'], 'af':af_t.cpu().numpy()}, index=variant_ids)
         susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
 
     logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')

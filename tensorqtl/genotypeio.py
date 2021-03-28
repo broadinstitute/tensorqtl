@@ -378,8 +378,9 @@ class InputGeneratorCis(object):
         valid_ix = []
         self.cis_ranges = {}
         for k,phenotype_id in enumerate(self.phenotype_df.index,1):
-            if np.mod(k, 1000) == 0:
-                print(f'\r  * checking phenotypes: {k}/{self.phenotype_df.shape[0]}', end='' if k != phenotype_df.shape[0] else None)
+            if np.mod(k, 1000) == 0 or k == phenotype_df.shape[0]:
+                print(f'\r  * checking phenotypes: {k}/{self.phenotype_df.shape[0]}',
+                      end='' if k != phenotype_df.shape[0] else None)
 
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]

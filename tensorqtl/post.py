@@ -79,7 +79,6 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
     n2 = 2 * genotypes_t.shape[1]
     af_t = genotypes_t.sum(1) / n2
     ix_t = af_t <= 0.5
-    maf_t = torch.where(ix_t, af_t, 1 - af_t)
     # calculate MA samples and counts
     m = genotypes_t > 0.5
     a = m.sum(1).int()
@@ -109,8 +108,8 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
         slope_se_t = (slope_t.abs().double() / tstat_t).float()
         pval = 2*stats.t.cdf(-np.abs(tstat_t.cpu()), dof)
 
-        rep_df = pd.DataFrame(np.c_[res_df.index, res_df['variant_id'], ma_samples_t.cpu(), ma_count_t.cpu(), maf_t.cpu(), pval, slope_t.cpu(), slope_se_t.cpu()],
-                              columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'maf', 'pval_nominal', 'slope', 'slope_se']).infer_objects()
+        rep_df = pd.DataFrame(np.c_[res_df.index, res_df['variant_id'], ma_samples_t.cpu(), ma_count_t.cpu(), af_t.cpu(), pval, slope_t.cpu(), slope_se_t.cpu()],
+                              columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'af', 'pval_nominal', 'slope', 'slope_se']).infer_objects()
 
     else:
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
@@ -144,9 +143,9 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
         b = b_t.cpu()
         b_se = b_se_t.cpu()
 
-        rep_df = pd.DataFrame(np.c_[res_df.index, res_df['variant_id'], ma_samples_t.cpu(), ma_count_t.cpu(), maf_t.cpu(),
+        rep_df = pd.DataFrame(np.c_[res_df.index, res_df['variant_id'], ma_samples_t.cpu(), ma_count_t.cpu(), af_t.cpu(),
                                     pval[:,0], b[:,0], b_se[:,0], pval[:,1], b[:,1], b_se[:,1], pval[:,2], b[:,2], b_se[:,2]],
-                              columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'maf',
+                              columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'af',
                                        'pval_g', 'b_g', 'b_g_se', 'pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']).infer_objects()
         pval = pval[:,2]
 
@@ -195,8 +194,8 @@ def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
         print('  * adding variant annotations from lookup table', flush=True)
         gene_df = gene_df.join(lookup_df, on='variant_id')  # add variant information
         col_order += list(lookup_df.columns)
-    col_order += ['ma_samples', 'ma_count', 'maf', 'ref_factor',
-        'pval_nominal', 'slope', 'slope_se', 'pval_perm', 'pval_beta']
+    col_order += ['ma_samples', 'ma_count', 'af', 'pval_nominal',
+                  'slope', 'slope_se', 'pval_perm', 'pval_beta']
     if 'group_id' in gene_df:
         col_order += ['group_id', 'group_size']
     col_order += ['qval', 'pval_nominal_threshold']

@@ -36,12 +36,11 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
 
-    # calculate MAF
+    # calculate allele frequency
     n2 = 2 * genotypes_t.shape[1]
     af_t = genotypes_t.sum(1) / n2
-    ix_t = af_t <= 0.5
-    maf_t = torch.where(ix_t, af_t, 1 - af_t)
     # calculate MA samples and counts
+    ix_t = af_t <= 0.5
     m = genotypes_t > 0.5
     a = m.sum(1).int()
     b = (genotypes_t < 1.5).sum(1).int()
@@ -49,7 +48,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     a = (genotypes_t * m.float()).sum(1).int()
     ma_count_t = torch.where(ix_t, a, n2-a)
 
-    return tstat_t, slope_t, slope_se_t, maf_t, ma_samples_t, ma_count_t
+    return tstat_t, slope_t, slope_se_t, af_t, ma_samples_t, ma_count_t
 
 
 def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=None):
@@ -99,11 +98,11 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
     if interaction_s is None:
         res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
-        tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+        tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
         df = pd.DataFrame({
             'pval_nominal':2*stats.t.cdf(-np.abs(tstat), dof),
             'slope':slope, 'slope_se':slope_se,
-            'tstat':tstat, 'maf':maf, 'ma_samples':ma_samples, 'ma_count':ma_count,
+            'tstat':tstat, 'af':af, 'ma_samples':ma_samples, 'ma_count':ma_count,
         }, index=genotype_df.index)
     else:
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
@@ -118,7 +117,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
                                                      maf_threshold_interaction=maf_threshold_interaction)
         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t, residualizer,
                                             return_sparse=False)
-        tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+        tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
         mask = mask_t.cpu().numpy()
         dof -= 2
 
@@ -126,7 +125,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
             'pval_g':2*stats.t.cdf(-np.abs(tstat[:,0]), dof), 'b_g':b[:,0], 'b_g_se':b_se[:,0],
             'pval_i':2*stats.t.cdf(-np.abs(tstat[:,1]), dof), 'b_i':b[:,1], 'b_i_se':b_se[:,1],
             'pval_gi':2*stats.t.cdf(-np.abs(tstat[:,2]), dof), 'b_gi':b[:,2], 'b_gi_se':b_se[:,2],
-            'maf':maf, 'ma_samples':ma_samples, 'ma_count':ma_count,
+            'af':af, 'ma_samples':ma_samples, 'ma_count':ma_count,
         }, index=genotype_df.index[mask])
     if df.index.str.startswith('chr').all():  # assume chr_pos_ref_alt_build format
         df['position'] = df.index.map(lambda x: int(x.split('_')[1]))
@@ -209,7 +208,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         chr_res['phenotype_id'] = []
         chr_res['variant_id'] = []
         chr_res['tss_distance'] = np.empty(n, dtype=np.int32)
-        chr_res['maf'] =          np.empty(n, dtype=np.float32)
+        chr_res['af'] =           np.empty(n, dtype=np.float32)
         chr_res['ma_samples'] =   np.empty(n, dtype=np.int32)
         chr_res['ma_count'] =     np.empty(n, dtype=np.int32)
         if interaction_s is None:
@@ -249,7 +248,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
                 if interaction_s is None:
                     res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
-                    tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                    tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     n = len(variant_ids)
                 else:
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
@@ -260,13 +259,13 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
                                                             residualizer=residualizer, return_sparse=False,
                                                             variant_ids=variant_ids)
-                        tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                        tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         tss_distance = tss_distance[mask]
                         n = len(variant_ids)
 
                         # top association
                         ix = np.nanargmax(np.abs(tstat[:,2]))
-                        top_s = pd.Series([phenotype_id, variant_ids[ix], tss_distance[ix], maf[ix], ma_samples[ix], ma_count[ix],
+                        top_s = pd.Series([phenotype_id, variant_ids[ix], tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix],
                                            tstat[ix,0], b[ix,0], b_se[ix,0],
                                            tstat[ix,1], b[ix,1], b_se[ix,1],
                                            tstat[ix,2], b[ix,2], b_se[ix,2]], index=chr_res.keys())
@@ -280,7 +279,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     chr_res['phenotype_id'].extend([phenotype_id]*n)
                     chr_res['variant_id'].extend(variant_ids)
                     chr_res['tss_distance'][start:start+n] = tss_distance
-                    chr_res['maf'][start:start+n] = maf
+                    chr_res['af'][start:start+n] = af
                     chr_res['ma_samples'][start:start+n] = ma_samples
                     chr_res['ma_count'][start:start+n] = ma_count
                     if interaction_s is None:
@@ -334,12 +333,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
                     if interaction_s is None:
                         res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
-                        tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                        tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     else:
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
                                                             residualizer=residualizer, return_sparse=False,
                                                             variant_ids=variant_ids)
-                        tstat, b, b_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                        tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     px = [phenotype_id]*n
 
                     # iterate over remaining phenotypes in group
@@ -347,12 +346,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                         if interaction_s is None:
                             res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
-                            tstat0, slope0, slope_se0, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                            tstat0, slope0, slope_se0, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         else:
                             res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
                                                                 residualizer=residualizer, return_sparse=False,
                                                                 variant_ids=variant_ids)
-                            tstat0, b0, b_se0, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                            tstat0, b0, b_se0, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
 
                         # find associations that are stronger for current phenotype
                         if interaction_s is None:
@@ -375,7 +374,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     chr_res['phenotype_id'].extend(px)
                     chr_res['variant_id'].extend(variant_ids)
                     chr_res['tss_distance'][start:start+n] = tss_distance
-                    chr_res['maf'][start:start+n] = maf
+                    chr_res['af'][start:start+n] = af
                     chr_res['ma_samples'][start:start+n] = ma_samples
                     chr_res['ma_count'][start:start+n] = ma_count
                     if interaction_s is None:
@@ -396,7 +395,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     # top association for the group
                     if interaction_s is not None:
                         ix = np.nanargmax(np.abs(tstat[:,2]))
-                        top_s = pd.Series([chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix], tss_distance[ix], maf[ix], ma_samples[ix], ma_count[ix],
+                        top_s = pd.Series([chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix], tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix],
                                            tstat[ix,0], b[ix,0], b_se[ix,0],
                                            tstat[ix,1], b[ix,1], b_se[ix,1],
                                            tstat[ix,2], b[ix,2], b_se[ix,2]], index=chr_res.keys())
@@ -410,7 +409,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
 
         # convert to dataframe, compute p-values and write current chromosome
-        if start < len(chr_res['maf']):
+        if start < len(chr_res['af']):
             for x in chr_res:
                 chr_res[x] = chr_res[x][:start]
 
@@ -457,14 +456,11 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
     slope_se = np.abs(slope) / np.sqrt(tstat2)
 
     n2 = 2*len(g)
-    maf = np.sum(g) / n2
-    if maf <= 0.5:
-        ref_factor = 1
+    af = np.sum(g) / n2
+    if af <= 0.5:
         ma_samples = np.sum(g>0.5)
         ma_count = np.sum(g[g>0.5])
     else:
-        maf = 1-maf
-        ref_factor = -1
         ma_samples = np.sum(g<1.5)
         ma_count = n2 - np.sum(g[g>0.5])
 
@@ -478,8 +474,7 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
         ('tss_distance', tss_distance),
         ('ma_samples', ma_samples),
         ('ma_count', ma_count),
-        ('maf', maf),
-        ('ref_factor', ref_factor),
+        ('af', af),
         ('pval_nominal', pval_from_corr(r2_nominal, dof)),
         ('slope', slope),
         ('slope_se', slope_se),
@@ -655,7 +650,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     signif_df = cis_df[cis_df[fdr_col]<=fdr].copy()
     cols = [
         'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df',
-        'variant_id', 'tss_distance', 'ma_samples', 'ma_count', 'maf', 'ref_factor',
+        'variant_id', 'tss_distance', 'ma_samples', 'ma_count', 'af',
         'pval_nominal', 'slope', 'slope_se', 'pval_perm', 'pval_beta',
     ]
     if group_s is not None:
