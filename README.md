@@ -1,6 +1,6 @@
 ## tensorQTL
 
-tensorQTL is a GPU-based QTL mapper, enabling ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
+tensorQTL is a GPU-enabled QTL mapper, achieving ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
 
 If you use tensorQTL in your research, please cite the following paper:
 [Taylor-Weiner, Aguet, et al., *Genome Biol.* 20:228, 2019](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1836-7).
@@ -24,7 +24,7 @@ $ source venv/bin/activate
 
 ### Requirements
 
-tensorQTL requires an environment configured with a GPU. Instructions for setting up a virtual machine on Google Cloud Platform are provided [here](install/INSTALL.md).
+tensorQTL requires an environment configured with a GPU for optimal performance, but can also be run on a CPU. Instructions for setting up a virtual machine on Google Cloud Platform are provided [here](install/INSTALL.md).
 
 ### Input formats
 Three inputs are required for QTL analyses with tensorQTL: genotypes, phenotypes, and covariates. 
