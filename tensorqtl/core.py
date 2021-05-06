@@ -296,6 +296,9 @@ def read_phenotype_bed(phenotype_bed):
     else:
         raise ValueError('Unsupported file type.')
     phenotype_df.rename(columns={i:i.lower().replace('#chr','chr') for i in phenotype_df.columns[:3]}, inplace=True)
+    # make sure TSS/cis-window is properly defined
+    if not (phenotype_df['start']+1 == phenotype_df['end']).all():
+        raise ValueError("The BED file must define the TSS/cis-window center, with start+1 == end.")
     phenotype_pos_df = phenotype_df[['chr', 'end']].rename(columns={'end':'tss'})
     phenotype_df.drop(['chr', 'start', 'end'], axis=1, inplace=True)
     return phenotype_df, phenotype_pos_df
