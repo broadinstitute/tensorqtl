@@ -730,7 +730,9 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
             while True:
                 # add variant to covariates
                 variant_id = forward_df[-1]['variant_id']
-                ig = genotype_df.values[ix_dict[variant_id], genotype_ix]
+                ig = genotype_df.values[ix_dict[variant_id], genotype_ix].copy()
+                m = ig == -1
+                ig[m] = ig[~m].mean()
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
                 dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
@@ -805,7 +807,9 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
             while True:
                 # add variant to covariates
                 variant_id = forward_df[-1]['variant_id']
-                ig = genotype_df.values[ix_dict[variant_id], genotype_ix]
+                ig = genotype_df.values[ix_dict[variant_id], genotype_ix].copy()
+                m = ig == -1
+                ig[m] = ig[~m].mean()
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
                 dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
