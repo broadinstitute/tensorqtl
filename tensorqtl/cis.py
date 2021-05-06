@@ -51,7 +51,8 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     return tstat_t, slope_t, slope_se_t, af_t, ma_samples_t, ma_count_t
 
 
-def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=None):
+def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                               residualizer=None, random_tiebreak=False):
     """Calculate nominal and empirical correlations"""
     permutations_t = phenotype_t[permutation_ix_t]
 
@@ -68,7 +69,11 @@ def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, resid
 
     r2_nominal_t = r_nominal_t.pow(2)
     r2_nominal_t[torch.isnan(r2_nominal_t)] = -1  # workaround for nanargmax()
-    ix = r2_nominal_t.argmax()
+    if not random_tiebreak:
+        ix = r2_nominal_t.argmax()
+    else:
+        ix = torch.nonzero(r2_nominal_t == r2_nominal_t.max(), as_tuple=True)[0]
+        ix = ix[torch.randint(0, len(ix), [1])[0]]
     return r_nominal_t[ix], std_ratio_t[ix], ix, r2_perm_t, genotypes_t[ix]
 
 
@@ -509,7 +514,7 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
 
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=None,
             group_s=None, maf_threshold=0, beta_approx=True, nperm=10000,
-            window=1000000, logger=None, seed=None, verbose=True):
+            window=1000000, random_tiebreak=False, logger=None, seed=None, verbose=True):
     """Run cis-QTL mapping"""
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -534,6 +539,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
+    if random_tiebreak:
+        logger.write(f'  * randomly selecting top variant in case of ties')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
@@ -579,7 +586,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
 
-            res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
+            res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                                             residualizer=residualizer, random_tiebreak=random_tiebreak)
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
@@ -617,7 +625,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             buf = []
             for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                 phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                                                 residualizer=residualizer, random_tiebreak=random_tiebreak)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes_t.shape[0], phenotype_id])
@@ -634,7 +643,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
 def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos_df, covariates_df,
                     group_s=None, maf_threshold=0, fdr=0.05, fdr_col='qval', nperm=10000,
-                    window=1000000, logger=None, seed=None, verbose=True):
+                    window=1000000, random_tiebreak=False, logger=None, seed=None, verbose=True):
     """
     Run independent cis-QTL mapping (forward-backward regression)
 
@@ -675,6 +684,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
+    if random_tiebreak:
+        logger.write(f'  * randomly selecting top variant in case of ties')
     phenotype_df = phenotype_df.loc[ix]
     phenotype_pos_df = phenotype_pos_df.loc[ix]
 
@@ -725,7 +736,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                 residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
-                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
+                res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                                                 residualizer=residualizer, random_tiebreak=random_tiebreak)
                 r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
                 x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                 # add to list if empirical p-value passes significance threshold
@@ -753,7 +765,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                     residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
-                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                                                     residualizer=residualizer, random_tiebreak=random_tiebreak)
                     r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
                     var_ix = genotype_range[var_ix]
                     variant_id = variant_df.index[var_ix]
@@ -802,7 +815,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 buf = []
                 for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                     phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
+                    res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                                                     residualizer=residualizer, random_tiebreak=random_tiebreak)
                     res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                     res[2] = genotype_range[res[2]]
                     buf.append(res + [genotypes.shape[0], phenotype_id])
@@ -832,7 +846,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     buf = []
                     for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                        res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer=residualizer)
+                        res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
+                                                         residualizer=residualizer, random_tiebreak=random_tiebreak)
                         res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                         res[2] = genotype_range[res[2]]
                         buf.append(res + [genotypes.shape[0], phenotype_id])
