@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
-    parser.add_argument('--maf_threshold', default=None, type=np.float64, help='Include only genotypes with minor allele frequency >= maf_threshold. Default: 0')
+    parser.add_argument('--maf_threshold', default=0, type=np.float64, help='Include only genotypes with minor allele frequency >= maf_threshold. Default: 0')
     parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
     parser.add_argument('--return_r2', action='store_true', help='Return r2 (only for sparse trans-QTL output)')
@@ -108,7 +108,7 @@ def main():
         if args.mode=='cis':
             res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
                                  group_s=group_s, nperm=args.permutations, window=args.window,
-                                 logger=logger, seed=args.seed, verbose=True)
+                                 maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
             if has_rpy2:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda, logger=logger)
@@ -118,8 +118,8 @@ def main():
             if not args.load_split:
                 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, args.prefix, covariates_df=covariates_df,
                                 interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                group_s=None, window=args.window, run_eigenmt=True, output_dir=args.output_dir,
-                                write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
+                                group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
+                                output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
             else:  # load genotypes for each chromosome separately
                 top_df = []
                 for chrom in pr.chrs:
@@ -130,8 +130,8 @@ def main():
                                              phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
                                              args.prefix, covariates_df=covariates_df,
                                              interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
-                                             group_s=None, window=args.window, run_eigenmt=True, output_dir=args.output_dir,
-                                             write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
+                                             group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
+                                             output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
                     top_df.append(chr_df)
                 if interaction_s is not None:
                     top_df = pd.concat(top_df)
@@ -143,7 +143,7 @@ def main():
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
             res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
                                          group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
-                                         logger=logger, seed=args.seed, verbose=True)
+                                         maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
