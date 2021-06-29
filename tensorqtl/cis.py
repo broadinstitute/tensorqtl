@@ -514,7 +514,8 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
 
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=None,
             group_s=None, maf_threshold=0, beta_approx=True, nperm=10000,
-            window=1000000, random_tiebreak=False, logger=None, seed=None, verbose=True):
+            window=1000000, random_tiebreak=False, logger=None, seed=None,
+            verbose=True, warn_monomorphic=True):
     """Run cis-QTL mapping"""
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -578,7 +579,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             if mono_t.any():
                 genotypes_t = genotypes_t[~mono_t]
                 genotype_range = genotype_range[~mono_t.cpu()]
-                logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
+                if warn_monomorphic:
+                    logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
 
             if genotypes_t.shape[0] == 0:
                 logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
@@ -615,7 +617,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             if mono_t.any():
                 genotypes_t = genotypes_t[~mono_t]
                 genotype_range = genotype_range[~mono_t.cpu()]
-                logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
+                if warn_monomorphic:
+                    logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
 
             if genotypes_t.shape[0] == 0:
                 logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
