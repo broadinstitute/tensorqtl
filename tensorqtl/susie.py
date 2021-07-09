@@ -585,19 +585,20 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         genotypes_t = genotypes_t[:,genotype_ix_t]
         impute_mean(genotypes_t)
 
-        if maf_threshold > 0:
-            maf_t = calculate_maf(genotypes_t)
-            mask_t = maf_t >= maf_threshold
-            genotypes_t = genotypes_t[mask_t]
-            genotype_range = genotype_range[mask_t.cpu().numpy().astype(bool)]
+        variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
 
         # filter monomorphic variants
-        mono_t = (genotypes_t == genotypes_t[:, [0]]).all(1)
-        if mono_t.any():
-            genotypes_t = genotypes_t[~mono_t]
-            genotype_range = genotype_range[~mono_t.cpu()]
-            if warn_monomorphic:
-                logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
+        mask_t = ~(genotypes_t == genotypes_t[:, [0]]).all(1)
+        if warn_monomorphic:
+            logger.write(f'    * WARNING: excluding {~mask_t.sum()} monomorphic variants')
+        if maf_threshold > 0:
+            maf_t = calculate_maf(genotypes_t)
+            mask_t &= maf_t >= maf_threshold
+        if mask_t.any():
+            genotypes_t = genotypes_t[mask_t]
+            mask = mask_t.cpu().numpy().astype(bool)
+            variant_ids = variant_ids[mask]
+            genotype_range = genotype_range[mask]
 
         if genotypes_t.shape[0] == 0:
             logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
@@ -615,7 +616,6 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
                     tol=tol, max_iter=max_iter)
 
         af_t = genotypes_t.sum(1) / (2 * genotypes_t.shape[1])
-        variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
         res['pip'] = pd.DataFrame({'pip':res['pip'], 'af':af_t.cpu().numpy()}, index=variant_ids)
         if not summary_only:
             susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
