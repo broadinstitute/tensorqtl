@@ -519,7 +519,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
     s['niter'] = i
 
     if 'converged' not in s:
-        print(f"WARNING: IBSS algorithm did not converge in {max_iter} iterations!")
+        print(f"\n    WARNING: IBSS algorithm did not converge in {max_iter} iterations!")
         s['converged'] = False
 
     if intercept:
@@ -542,11 +542,10 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
 
 
 def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
-        L=10, scaled_prior_variance=0.2,
-        estimate_residual_variance=True,
+        L=10, scaled_prior_variance=0.2, estimate_residual_variance=True,
         estimate_prior_variance=True, tol=1e-3,
-        coverage=0.95, min_abs_corr=0.5,
-        max_iter=100, window=1000000, logger=None, verbose=True):
+        coverage=0.95, min_abs_corr=0.5, summary_only=True, maf_threshold=0,
+        max_iter=100, window=1000000, logger=None, verbose=True, warn_monomorphic=False):
     """
     SuSiE fine-mapping: computes SuSiE model for all phenotypes
     """
@@ -561,6 +560,8 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     logger.write(f'  * {covariates_df.shape[1]} covariates')
     logger.write(f'  * {variant_df.shape[0]} variants')
+    if maf_threshold > 0:
+        logger.write(f'  * applying in-sample MAF >= {maf_threshold} filter')
 
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
 
@@ -574,19 +575,33 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
     start_time = time.time()
     logger.write('  * fine-mapping')
     copy_keys = ['pip', 'sets', 'converged', 'niter']
-    susie_res = {}
+    if not summary_only:
+        susie_res = {}
+    else:
+        susie_res = []
     for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
         # copy genotypes to GPU
         genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
         genotypes_t = genotypes_t[:,genotype_ix_t]
+        impute_mean(genotypes_t)
+
+        if maf_threshold > 0:
+            maf_t = calculate_maf(genotypes_t)
+            mask_t = maf_t >= maf_threshold
+            genotypes_t = genotypes_t[mask_t]
+            genotype_range = genotype_range[mask_t.cpu().numpy().astype(bool)]
 
         # filter monomorphic variants
-        # genotypes_t = genotypes_t[~(genotypes_t == genotypes_t[:, [0]]).all(1)]
-        # if genotypes_t.shape[0] == 0:
-        #     logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
-        #     continue
+        mono_t = (genotypes_t == genotypes_t[:, [0]]).all(1)
+        if mono_t.any():
+            genotypes_t = genotypes_t[~mono_t]
+            genotype_range = genotype_range[~mono_t.cpu()]
+            if warn_monomorphic:
+                logger.write(f'    * WARNING: excluding {mono_t.sum()} monomorphic variants')
 
-        impute_mean(genotypes_t)
+        if genotypes_t.shape[0] == 0:
+            logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
+            continue
 
         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
         genotypes_res_t = residualizer.transform(genotypes_t)  # variants x samples
@@ -602,10 +617,25 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         af_t = genotypes_t.sum(1) / (2 * genotypes_t.shape[1])
         variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
         res['pip'] = pd.DataFrame({'pip':res['pip'], 'af':af_t.cpu().numpy()}, index=variant_ids)
-        susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
+        if not summary_only:
+            susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
+        else:
+            if res['sets']['cs'] is not None:
+                # assert res['converged'] == True
+                if res['converged'] == True:
+                    for c in sorted(res['sets']['cs'], key=lambda x: int(x.replace('L',''))):
+                        cs = res['sets']['cs'][c]  # indexes
+                        p = res['pip'].iloc[cs].copy().reset_index()
+                        p['cs_id'] = c.replace('L','')
+                        p.insert(0, 'phenotype_id', phenotype_id)
+                        susie_res.append(p)
+                else:
+                    print(f'    * phenotype ID: {phenotype_id}')
 
     logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')
     logger.write('done.')
+    if summary_only:
+        susie_res = pd.concat(susie_res, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
     return susie_res
 
 
@@ -624,7 +654,7 @@ def get_summary(res_dict, verbose=True):
                 cs = res_dict[k]['sets']['cs'][c]  # indexes
                 p = res_dict[k]['pip'].iloc[cs].copy().reset_index()
                 p['cs_id'] = c.replace('L','')
-                p.insert(0, 'gene_id', k)
+                p.insert(0, 'phenotype_id', k)
                 summary_df.append(p)
     summary_df = pd.concat(summary_df, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
     return summary_df
