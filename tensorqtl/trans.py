@@ -123,17 +123,24 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                     tstat_t.cpu(), b_t.cpu(), b_se_t.cpu(),
                     r2_t.float().cpu(), af_t[ix_t[:,0]].cpu()
                 ])
-            else:
+            else:  # dense output: pval, b, b_se, af
                 r_t = r_t.type(torch.float64)
                 tstat_t = r_t * torch.sqrt(dof / (1 - r_t.pow(2)))
-                res.append(np.c_[variant_ids, tstat_t.cpu()])
+                std_ratio_t = torch.sqrt(phenotype_var_t / genotype_var_t.reshape(-1,1))
+                b_t = (r_t * std_ratio_t).type(torch.float32)
+                b_se_t = (b_t / tstat_t).type(torch.float32)
+                res.append([variant_ids, tstat_t.cpu(), b_t.cpu(), b_se_t.cpu(), af_t.cpu()])
+
         logger.write(f'    elapsed time: {(time.time()-start_time)/60:.2f} min')
         del phenotypes_t
         del residualizer
 
+        if maf_threshold > 0:
+            logger.write(f'  * {n_variants} variants passed MAF >= {maf_threshold:.2f} filtering')
+
         # post-processing: concatenate batches
-        res = np.concatenate(res)
         if return_sparse:
+            res = np.concatenate(res)
             res[:,2] = 2*stats.t.cdf(-np.abs(res[:,2].astype(np.float64)), dof)
             pval_df = pd.DataFrame(res, columns=['variant_id', 'phenotype_id', 'pval', 'b', 'b_se', 'r2', 'af'])
             pval_df['pval'] = pval_df['pval'].astype(np.float64)
@@ -143,15 +150,21 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
             pval_df['af'] = pval_df['af'].astype(np.float32)
             if not return_r2:
                 pval_df.drop('r2', axis=1, inplace=True)
+            logger.write('done.')
+            return pval_df
         else:
-            pval = 2*stats.t.cdf(-np.abs(res[:,1:].astype(np.float64)), dof)
-            pval_df = pd.DataFrame(pval, index=res[:,0], columns=phenotype_df.index)
-            pval_df.index.name = 'variant_id'
+            variant_ids = pd.Series(np.concatenate([i[0] for i in res]), name='variant_id')
+            pval_df = pd.DataFrame(2*stats.t.cdf(-np.abs(np.concatenate([i[1] for i in res]).astype(np.float64)), dof),
+                                   index=variant_ids, columns=phenotype_df.index)
+            b_df = pd.DataFrame(np.concatenate([i[2] for i in res]),
+                                index=variant_ids, columns=phenotype_df.index)
+            b_se_df = pd.DataFrame(np.concatenate([i[3] for i in res]),
+                                index=variant_ids, columns=phenotype_df.index)
+            af_s = pd.Series(np.concatenate([i[4] for i in res]),
+                             index=variant_ids, name='af')
+            logger.write('done.')
+            return pval_df, b_df, b_se_df, af_s
 
-        if maf_threshold > 0:
-            logger.write(f'  * {n_variants} variants passed MAF >= {maf_threshold:.2f} filtering')
-        logger.write('done.')
-        return pval_df
 
     else:  # interaction model
         dof = n_samples - 4 - covariates_df.shape[1]
@@ -322,6 +335,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
 
     if chr_s is not None:
+        assert chr_s.index.equals(genotype_df.index)
         start_time = time.time()
         n_variants = 0
         ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size, chr_s=chr_s)

@@ -49,7 +49,7 @@ class SimpleLogger(object):
 class Residualizer(object):
     def __init__(self, C_t):
         # center and orthogonalize
-        self.Q_t, _ = torch.qr(C_t - C_t.mean(0))
+        self.Q_t, _ = torch.linalg.qr(C_t - C_t.mean(0))
         self.dof = C_t.shape[0] - 2 - C_t.shape[1]
 
     def transform(self, M_t, center=True):

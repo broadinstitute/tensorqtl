@@ -29,7 +29,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     if residualizer is not None:
         dof = residualizer.dof
     else:
-        dof = phenotype_t.shape[0] - 2
+        dof = p.shape[1] - 2
     slope_t = r_nominal_t * std_ratio_t.squeeze()
     tstat_t = r_nominal_t * torch.sqrt(dof / (1 - r2_nominal_t))
     slope_se_t = (slope_t.double() / tstat_t).float()

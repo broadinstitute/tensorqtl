@@ -204,7 +204,7 @@ def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
     return gene_df
 
 
-def get_significant_pairs(res_df, nominal_prefix, group_s=None, fdr=0.05):
+def get_significant_pairs(res_df, nominal_files, group_s=None, fdr=0.05):
     """Significant variant-phenotype pairs based on nominal p-value threshold for each phenotype"""
     print('['+datetime.now().strftime("%b %d %H:%M:%S")+'] tensorQTL: parsing all significant variant-phenotype pairs', flush=True)
     assert 'qval' in res_df
@@ -219,7 +219,11 @@ def get_significant_pairs(res_df, nominal_prefix, group_s=None, fdr=0.05):
     signif_phenotype_ids = set(df.index)
     threshold_dict = df['pval_nominal_threshold'].to_dict()
 
-    nominal_files = {os.path.basename(i).split('.')[-2]:i for i in glob.glob(nominal_prefix+'*.parquet')}
+    if isinstance(nominal_files, str):
+        nominal_files = {os.path.basename(i).split('.')[-2]:i for i in glob.glob(nominal_files+'*.parquet')}
+    else:
+        assert isinstance(nominal_files, dict)
+
     chroms = sorted(nominal_files.keys(), key=lambda x: int(x.replace('chr', '').replace('X', '23')))
     signif_df = []
     for k,c in enumerate(chroms, 1):

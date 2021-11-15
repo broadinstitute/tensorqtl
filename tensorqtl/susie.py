@@ -634,7 +634,7 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
 
     logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')
     logger.write('done.')
-    if summary_only:
+    if summary_only and susie_res:
         susie_res = pd.concat(susie_res, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
     return susie_res
 
