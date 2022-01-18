@@ -14,10 +14,10 @@ from core import *
 
 
 def _in_cis(chrom, pos, gene_id, tss_dict, window=1000000):
-    """Test if a variant-gene pair is in cis"""
-    if chrom==tss_dict[gene_id]['chr']:
+    """Test if a variant is within +/-window of a gene's TSS."""
+    if chrom == tss_dict[gene_id]['chr']:
         tss = tss_dict[gene_id]['tss']
-        if pos>=tss-window and pos<=tss+window:
+        if pos >= tss - window and pos <= tss + window:
             return True
         else:
             return False
@@ -33,7 +33,7 @@ def filter_cis(pairs_df, tss_dict, variant_df, window=5000000):
         tss_dict: gene_id->tss
         window: filter variants within +/-window of TSS
     """
-    variant_df = variant_df.loc[pairs_df['variant_id'].unique()]
+    variant_df = variant_df.loc[pairs_df['variant_id'].unique()].copy()
     variant_dict = {}
     for variant_id, chrom, pos in zip(variant_df.index, variant_df['chrom'], variant_df['pos']):
         variant_dict[variant_id] = {'chrom':chrom, 'pos':pos}
@@ -49,7 +49,16 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
               return_sparse=True, pval_threshold=1e-5, maf_threshold=0.05,
               alleles=2, return_r2=False, batch_size=20000,
               logger=None, verbose=True):
-    """Run trans-QTL mapping"""
+    """Run trans-QTL mapping
+
+    Outputs (return_sparse == True):
+      pval_df: DataFrame with columns variant_id, phenotype_id, pval, b, b_se, af
+    Outputs (return_sparse == False):
+      pval_df
+      b_df
+      b_se_df
+      af_s
+    """
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
