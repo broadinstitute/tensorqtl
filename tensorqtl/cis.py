@@ -12,7 +12,7 @@ import genotypeio, eigenmt
 from core import *
 
 
-def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
+def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None, return_af=True):
     """
     Calculate nominal associations
 
@@ -36,19 +36,11 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat)))
 
-    # calculate allele frequency
-    n2 = 2 * genotypes_t.shape[1]
-    af_t = genotypes_t.sum(1) / n2
-    # calculate MA samples and counts
-    ix_t = af_t <= 0.5
-    m = genotypes_t > 0.5
-    a = m.sum(1).int()
-    b = (genotypes_t < 1.5).sum(1).int()
-    ma_samples_t = torch.where(ix_t, a, b)
-    a = (genotypes_t * m.float()).sum(1).int()
-    ma_count_t = torch.where(ix_t, a, n2-a)
-
-    return tstat_t, slope_t, slope_se_t, af_t, ma_samples_t, ma_count_t
+    if return_af:
+        af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
+        return tstat_t, slope_t, slope_se_t, af_t, ma_samples_t, ma_count_t
+    else:
+        return tstat_t, slope_t, slope_se_t
 
 
 def calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,

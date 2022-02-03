@@ -150,6 +150,9 @@ def run_pairs(genotype_df, variant_df, phenotype1_df, phenotype2_df, phenotype_p
     else:
         residualizer2 = None
 
+    if maf_threshold > 0:
+        logger.write(f'  * applying in-sample {maf_threshold} MAF filter (in at least one cohort)')
+
     genotype1_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype1_df.columns])
     genotype1_ix_t = torch.from_numpy(genotype1_ix).to(device)
     genotype2_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype2_df.columns])

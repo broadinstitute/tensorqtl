@@ -54,17 +54,34 @@ class Residualizer(object):
 
     def transform(self, M_t, center=True):
         """Residualize rows of M wrt columns of C"""
+        M0_t = M_t - M_t.mean(1, keepdim=True)
         if center:
-            M0_t = M_t - M_t.mean(1, keepdim=True)
+            M0_t = M0_t - torch.mm(torch.mm(M0_t, self.Q_t), self.Q_t.t())
         else:
-            M0_t = M_t
-        return M_t - torch.mm(torch.mm(M0_t, self.Q_t), self.Q_t.t())  # keep original mean
+            M0_t = M_t - torch.mm(torch.mm(M0_t, self.Q_t), self.Q_t.t())
+        return M0_t
 
 
 def calculate_maf(genotype_t, alleles=2):
     """Calculate minor allele frequency"""
     af_t = genotype_t.sum(1) / (alleles * genotype_t.shape[1])
     return torch.where(af_t > 0.5, 1 - af_t, af_t)
+
+
+def get_allele_stats(genotype_t):
+    """Returns allele frequency, minor allele samples, and minor allele counts (row-wise)."""
+    # allele frequency
+    n2 = 2 * genotype_t.shape[1]
+    af_t = genotype_t.sum(1) / n2
+    # minor allele samples and counts
+    ix_t = af_t <= 0.5
+    m = genotype_t > 0.5
+    a = m.sum(1).int()
+    b = (genotype_t < 1.5).sum(1).int()
+    ma_samples_t = torch.where(ix_t, a, b)
+    a = (genotype_t * m.float()).sum(1).int()
+    ma_count_t = torch.where(ix_t, a, n2-a)
+    return af_t, ma_samples_t, ma_count_t
 
 
 def filter_maf(genotypes_t, variant_ids, maf_threshold, alleles=2):
@@ -225,6 +242,64 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         tstat_gi_t = tstat_gi_t[m]
         ix = m.nonzero(as_tuple=False)  # indexes: [genotype, phenotype]
         return tstat_g_t, tstat_i_t, tstat_gi_t, af_t[ix[:,0]], ix
+
+
+def linreg(X_t, y_t, dtype=torch.float64):
+    """
+    Robust linear regression. Solves y = Xb, standardizing X.
+    The first column of X must be the intercept.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    x_std_t = X_t.std(0)
+    x_mean_t = X_t.mean(0)
+    x_std_t[0] = 1
+    x_mean_t[0] = 0
+
+    # standardize X
+    Xtilde_t = (X_t - x_mean_t) / x_std_t
+
+    # regression
+    XtX_t = torch.matmul(Xtilde_t.T, Xtilde_t)
+    Xty_t = torch.matmul(Xtilde_t.T, y_t)
+    b_t, _ = torch.solve(Xty_t.unsqueeze(-1), XtX_t)
+    b_t = b_t.squeeze()
+
+    # compute s.e.
+    dof = X_t.shape[0] - X_t.shape[1]
+    r_t = y_t - torch.matmul(Xtilde_t, b_t)
+    sigma2_t = (r_t*r_t).sum() / dof
+    XtX_inv_t, _ = torch.solve(torch.eye(X_t.shape[1], dtype=dtype).to(device), XtX_t)
+    var_b_t = sigma2_t * XtX_inv_t
+    b_se_t = torch.sqrt(torch.diag(var_b_t))
+
+    # rescale
+    b_t /= x_std_t
+    b_se_t /= x_std_t
+
+    # adjust intercept
+    b_t[0] -= torch.sum(x_mean_t * b_t)
+    ms_t = x_mean_t / x_std_t
+    b_se_t[0] = torch.sqrt(b_se_t[0]**2 + torch.matmul(torch.matmul(ms_t.T, var_b_t), ms_t))
+
+    return b_t, b_se_t
+
+
+def filter_covariates(covariates_t, log_counts_t, tstat_threshold=2):
+    """
+    Inputs:
+      covariates0_t: covariates matrix (samples x covariates)
+                     including genotype PCs, PEER factors, etc.
+                     ** with intercept in first column **
+      log_counts_t:  counts vector (samples)
+    """
+    assert (covariates_t[:,0] == 0).all()
+    b_t, b_se_t = linreg(covariates_t, log_counts_t)
+    tstat_t = b_t / b_se_t
+    m = tstat_t.abs() > tstat_threshold
+    m[0] = False
+    return covariates_t[:, m]
+
 
 #------------------------------------------------------------------------------
 #  Functions for beta-approximating empirical p-values

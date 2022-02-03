@@ -9,7 +9,8 @@ import glob
 from datetime import datetime
 
 sys.path.insert(1, os.path.dirname(__file__))
-from core import SimpleLogger, Residualizer, center_normalize, impute_mean
+from core import SimpleLogger, Residualizer, center_normalize, impute_mean, get_allele_stats
+import mixqtl
 
 
 has_rpy2 = False
@@ -60,8 +61,59 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
         res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
+def calculate_afc(gene_ids, variant_ids, counts_df, genotype_df, covariates_df=None,
+                  select_covariates=True, imputation='offset', count_threshold=0):
+    """
+    Calculate allelic fold-change (aFC) for variant-gene pairs
+
+      genotype_df: genotype dosages
+      counts_df: read counts scaled with DESeq size factors. Zeros are imputed using
+                 log(counts + 1) (imputation='offset'; default) or with half-minimum
+                 (imputation='half_min').
+      covariates_df: covariates (genotype PCs, PEER factors, etc.)
+
+    aFC [1] is computed using the total read count (trc) model from mixQTL [2].
+
+      [1] Mohammadi et al., 2017 (genome.cshlp.org/content/27/11/1872)
+      [2] Liang et al., 2021 (10.1038/s41467-021-21592-8)
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    assert len(variant_ids) == len(gene_ids)
+
+    genotypes_t = torch.tensor(genotype_df[genotype_df.index.isin(variant_ids)].loc[variant_ids].values,
+                               dtype=torch.float32).to(device)
+    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in counts_df.columns])
+    genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
+    genotypes_t = genotypes_t[:,genotype_ix_t]
+    impute_mean(genotypes_t)
+
+    counts_t = torch.tensor(counts_df.loc[gene_ids].values, dtype=torch.float32).to(device)
+
+    if covariates_df is not None:
+        covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
+    else:
+        covariates_t = None
+
+    afc = []
+    afc_se = []
+    for k in range(len(variant_ids)):
+        if (k+1) % 10 == 0 or k+1 == len(variant_ids):
+            print(f"\rCalculating aFC for variant-gene pair {k+1}/{len(variant_ids)}", end='', flush=True)
+        _, b, b_se = mixqtl.trc(genotypes_t[[k]], counts_t[k], covariates_t=covariates_t,
+                                select_covariates=select_covariates, count_threshold=count_threshold,
+                                imputation=imputation, return_af=False)
+        afc.append(float(b.cpu()))
+        afc_se.append(float(b_se.cpu()))
+    print()
+    afc = np.array(afc) * np.log2(np.e)
+    afc_se = np.array(afc_se) * np.log2(np.e)
+    afc_df = pd.DataFrame({'gene_id':gene_ids, 'variant_id':variant_ids,
+                           'afc':afc, 'afc_se':afc_se})
+    return afc_df
+
+
 def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, interaction_s=None,
-                          lambda_qvalue=None):
+                          compute_pi1=False, lambda_qvalue=None):
     """res_df: DataFrame with 'variant_id' column and phenotype IDs as index"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -72,20 +124,8 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
     impute_mean(genotypes_t)
 
     phenotypes_t = torch.tensor(phenotype_df.loc[res_df.index].values, dtype=torch.float32).to(device)
-
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
-
-    # calculate MAF
-    n2 = 2 * genotypes_t.shape[1]
-    af_t = genotypes_t.sum(1) / n2
-    ix_t = af_t <= 0.5
-    # calculate MA samples and counts
-    m = genotypes_t > 0.5
-    a = m.sum(1).int()
-    b = (genotypes_t < 1.5).sum(1).int()
-    ma_samples_t = torch.where(ix_t, a, b)
-    a = (genotypes_t * m.float()).sum(1).int()
-    ma_count_t = torch.where(ix_t, a, n2-a)
+    af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
 
     if interaction_s is None:
         genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
@@ -149,11 +189,14 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
                                        'pval_g', 'b_g', 'b_g_se', 'pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']).infer_objects()
         pval = pval[:,2]
 
-    try:
-        pi1 = 1 - rfunc.pi0est(pval, lambda_qvalue=lambda_qvalue)[0]
-    except:
-        pi1 = np.NaN
-    return pi1, rep_df
+    if compute_pi1:
+        try:
+            pi1 = 1 - rfunc.pi0est(pval, lambda_qvalue=lambda_qvalue)[0]
+        except:
+            pi1 = np.NaN
+        return pi1, rep_df
+    else:
+        return rep_df
 
 
 def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
