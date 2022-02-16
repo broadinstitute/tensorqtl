@@ -37,7 +37,10 @@ Three inputs are required for QTL analyses with tensorQTL: genotypes, phenotypes
       --vcf ${plink_prefix_path}.vcf.gz \
       --out ${plink_prefix_path}
   ```
-  Alternatively, the genotypes can be provided as a dataframe (genotypes x samples).
+  If using PLINK 1.9 or earlier, add the `--keep-allele-order` flag. 
+  
+  Alternatively, the genotypes can be provided as a dataframe (genotypes x samples). 
+
 
 The [examples notebook](example/tensorqtl_examples.ipynb) below contains examples of all input files. The input formats for phenotypes and covariates are identical to those used by [FastQTL](http://fastqtl.sourceforge.net/).
 
