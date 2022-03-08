@@ -522,7 +522,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         logger.write(f'  * {len(group_s.unique())} phenotype groups')
         group_dict = group_s.to_dict()
     if covariates_df is not None:
-        assert np.all(phenotype_df.columns==covariates_df.index)
+        assert np.all(phenotype_df.columns==covariates_df.index), 'Sample names in phenotype matrix columns and covariate matrix rows do not match!'
+        assert ~(covariates_df.isnull().any().any()), f'Missing or null values in covariates matrix, in columns {",".join(covariates_df.columns[covariates_df.isnull().any(axis=0)].astype(str))}'
         logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
         dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
