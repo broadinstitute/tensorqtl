@@ -99,7 +99,7 @@ def compute_tests(genotypes_t, var_thresh=0.99, variant_window=200):
         shrunk_precision_t.view(-1)[ix] = shrunk_cov_t.view(-1)[ix].pow(-0.5)
         shrunk_cor_t = torch.matmul(torch.matmul(shrunk_precision_t, shrunk_cov_t), shrunk_precision_t)
         eigenvalues_t,_ = torch.symeig(shrunk_cor_t, eigenvectors=False)  # will be deprecated
-        # eigenvalues_t = torch.linalg.eigvalsh(shrunk_cor_t)  # currently ~2x slower than symeig
+        # eigenvalues_t = torch.linalg.eigvalsh(shrunk_cor_t)  # ~2x slower than symeig with 1.10.0+cu102
 
     # last window
     shrunk_cov0_t, shrinkage0_t = lw_shrink(windows[-1].t())

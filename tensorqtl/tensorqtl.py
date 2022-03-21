@@ -23,7 +23,7 @@ def main():
     parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'trans'], help='Mapping mode. Default: cis')
     parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
     parser.add_argument('--permutations', type=int, default=10000, help='Number of permutations. Default: 10000')
-    parser.add_argument('--interaction', default=None, type=str, help='Interaction term')
+    parser.add_argument('--interaction', default=None, type=str, help='Interaction term(s)')
     parser.add_argument('--cis_output', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
     parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
@@ -43,7 +43,7 @@ def main():
     args = parser.parse_args()
 
     # check inputs
-    if args.mode=='cis_independent' and (args.cis_output is None or not os.path.exists(args.cis_output)):
+    if args.mode == 'cis_independent' and (args.cis_output is None or not os.path.exists(args.cis_output)):
         raise ValueError("Output from 'cis' mode must be provided.")
     if args.interaction is not None and args.mode not in ['cis_nominal', 'trans']:
         raise ValueError("Interactions are only supported in 'cis_nominal' or 'trans' mode.")
@@ -66,17 +66,25 @@ def main():
     if args.covariates is not None:
         logger.write(f'  * reading covariates ({args.covariates})')
         covariates_df = pd.read_csv(args.covariates, sep='\t', index_col=0).T
-        assert np.all(phenotype_df.columns==covariates_df.index)
+        assert phenotype_df.columns.equals(covariates_df.index)
     if args.interaction is not None:
-        logger.write(f'  * reading interaction term ({args.interaction})')
-        interaction_s = pd.read_csv(args.interaction, sep='\t', index_col=0, header=None, squeeze=True)
-        assert covariates_df.index.isin(interaction_s.index).all()
-        interaction_s = interaction_s.loc[covariates_df.index].astype(np.float32)
+        logger.write(f'  * reading interaction term(s) ({args.interaction})')
+        # allow headerless input for single interactions
+        with open(args.interaction) as f:
+            f.readline()
+            s = f.readline().strip()
+        if len(s.split('\t')) == 2:  # index + value
+            interaction_df = pd.read_csv(args.interaction, sep='\t', index_col=0, header=None)
+        else:
+            interaction_df = pd.read_csv(args.interaction, sep='\t', index_col=0)
+        # select samples
+        assert covariates_df.index.isin(interaction_df.index).all()
+        interaction_df = interaction_df.loc[covariates_df.index].astype(np.float32)
     else:
-        interaction_s = None
+        interaction_df = None
 
     if args.maf_threshold is None:
-        if args.mode=='trans':
+        if args.mode == 'trans':
             maf_threshold = 0.05
         else:
             maf_threshold = 0
@@ -84,7 +92,7 @@ def main():
         maf_threshold = args.maf_threshold
 
     if args.phenotype_groups is not None:
-        group_s = pd.read_csv(args.phenotype_groups, sep='\t', index_col=0, header=None, squeeze=True)
+        group_s = pd.read_csv(args.phenotype_groups, sep='\t', index_col=0, header=None).squeeze('columns')
         # verify sort order
         group_dict = group_s.to_dict()
         previous_group = ''
@@ -105,7 +113,7 @@ def main():
         genotype_df = pd.DataFrame(pr.load_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
 
     if args.mode.startswith('cis'):
-        if args.mode=='cis':
+        if args.mode == 'cis':
             res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
                                  group_s=group_s, nperm=args.permutations, window=args.window,
                                  maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
@@ -114,10 +122,10 @@ def main():
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda, logger=logger)
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', float_format='%.6g')
-        elif args.mode=='cis_nominal':
+        elif args.mode == 'cis_nominal':
             if not args.load_split:
                 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, args.prefix, covariates_df=covariates_df,
-                                interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
+                                interaction_df=interaction_df, maf_threshold_interaction=args.maf_threshold_interaction,
                                 group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
                                 output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
             else:  # load genotypes for each chromosome separately
@@ -126,19 +134,19 @@ def main():
                     g, pos_s = pr.get_region(chrom)
                     genotype_df = pd.DataFrame(g, index=pos_s.index, columns=pr.fam['iid'])[phenotype_df.columns]
                     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
-                    chr_df = cis.map_nominal(genotype_df, variant_df[variant_df['chrom']==chrom],
-                                             phenotype_df[phenotype_pos_df['chr']==chrom], phenotype_pos_df[phenotype_pos_df['chr']==chrom],
+                    chr_df = cis.map_nominal(genotype_df, variant_df[variant_df['chrom'] == chrom],
+                                             phenotype_df[phenotype_pos_df['chr'] == chrom], phenotype_pos_df[phenotype_pos_df['chr'] == chrom],
                                              args.prefix, covariates_df=covariates_df,
-                                             interaction_s=interaction_s, maf_threshold_interaction=args.maf_threshold_interaction,
+                                             interaction_df=interaction_df, maf_threshold_interaction=args.maf_threshold_interaction,
                                              group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
                                              output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
                     top_df.append(chr_df)
-                if interaction_s is not None:
+                if interaction_df is not None:
                     top_df = pd.concat(top_df)
                     top_df.to_csv(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl_top_assoc.txt.gz'),
                                   sep='\t', float_format='%.6g')
 
-        elif args.mode=='cis_independent':
+        elif args.mode == 'cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
             res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
@@ -147,14 +155,17 @@ def main():
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, args.prefix+'.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
-    elif args.mode=='trans':
+    elif args.mode == 'trans':
         return_sparse = not args.return_dense
         pval_threshold = args.pval_threshold
         if pval_threshold is None and return_sparse:
             pval_threshold = 1e-5
             logger.write(f'  * p-value threshold: {pval_threshold:.2g}')
 
-        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_s,
+        if interaction_df.shape[1] > 1:
+            raise NotImplementedError('trans-QTL mapping currently only supports a single interaction.')
+
+        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_df.squeeze('columns'),
                                   return_sparse=return_sparse, pval_threshold=pval_threshold,
                                   maf_threshold=maf_threshold, batch_size=args.batch_size,
                                   return_r2=args.return_r2, logger=logger)

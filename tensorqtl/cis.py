@@ -11,6 +11,11 @@ sys.path.insert(1, os.path.dirname(__file__))
 import genotypeio, eigenmt
 from core import *
 
+import imp
+import core
+imp.reload(core)
+from core import *
+imp.reload(eigenmt)
 
 def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None, return_af=True):
     """
@@ -73,7 +78,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
                           interaction_s=None, maf_threshold_interaction=0.05,
                           window=1000000, verbose=True):
     """
-    Helper function for computing the association between
+    Standalone helper function for computing the association between
     a set of genotypes and a single phenotype.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -130,7 +135,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
-                covariates_df=None, maf_threshold=0, interaction_s=None, maf_threshold_interaction=0.05,
+                covariates_df=None, maf_threshold=0, interaction_df=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
                 output_dir='.', write_top=True, write_stats=True, logger=None, verbose=True):
     """
@@ -139,7 +144,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
     Association results for each chromosome are written to parquet files
     in the format <output_dir>/<prefix>.cis_qtl_pairs.<chr>.parquet
 
-    If interaction_s is provided, the top association per phenotype is
+    If interaction_df is provided, the top association per phenotype is
     written to <output_dir>/<prefix>.cis_qtl_top_assoc.txt.gz unless
     write_top is set to False, in which case it is returned as a DataFrame
     """
@@ -162,25 +167,42 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         residualizer = None
         dof = phenotype_df.shape[1] - 2
     logger.write(f'  * {variant_df.shape[0]} variants')
-    if interaction_s is not None:
-        assert np.all(interaction_s.index==phenotype_df.columns)
-        logger.write('  * including interaction term')
-        if maf_threshold_interaction>0:
+    if interaction_df is not None:
+        assert interaction_df.index.equals(phenotype_df.columns)
+        logger.write(f"  * including {interaction_df.shape[1]} interaction term(s)")
+        if maf_threshold_interaction > 0:
             logger.write(f'    * using {maf_threshold_interaction:.2f} MAF threshold')
     elif maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
-    if interaction_s is not None:
-        dof -= 2
-        interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
-        if maf_threshold_interaction > 0:
-            mask_s = pd.Series(True, index=interaction_s.index)
-            mask_s[interaction_s.sort_values(kind='mergesort').index[:interaction_s.shape[0]//2]] = False
+    if interaction_df is not None:
+        ni = interaction_df.shape[1]
+        dof -= 2 * ni
+        interaction_t = torch.tensor(interaction_df.values, dtype=torch.float32).to(device)
+        if maf_threshold_interaction > 0 and ni == 1:
+            mask_s = pd.Series(True, index=interaction_df.index)
+            mask_s[interaction_df[interaction_df.columns[0]].sort_values(kind='mergesort').index[:interaction_df.shape[0]//2]] = False
             interaction_mask_t = torch.BoolTensor(mask_s).to(device)
         else:
+            # TODO: implement filtering for multiple interactions?
             interaction_mask_t = None
+        if ni == 1:
+            col_order = ['phenotype_id', 'variant_id', 'tss_distance', 'af', 'ma_samples', 'ma_count', 'pval_g', 'b_g', 'b_g_se',
+                         'pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']
+        else:
+            col_order = (['phenotype_id', 'variant_id', 'tss_distance', 'af', 'ma_samples', 'ma_count', 'pval_g', 'b_g', 'b_g_se'] +
+                         [k.replace('i', f"i{i+1}") for i in range(0,ni) for k in ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']])
+
+        # use column names instead of numbered interaction variables in output files
+        var_dict = []
+        for i,v in enumerate(interaction_df.columns, 1):
+            for c in ['pval_i', 'b_i', 'b_i_se']:
+                var_dict.append((c.replace('_i', f'_i{i}'), c.replace('_i', f'_{v}')))
+            for c in ['pval_gi', 'b_gi', 'b_gi_se']:
+                var_dict.append((c.replace('_gi', f'_gi{i}'), c.replace('_gi', f'_g-{v}')))
+        var_dict = dict(var_dict)
 
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=group_s, window=window)
     # iterate over chromosomes
@@ -191,13 +213,13 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
     for chrom in igc.chrs:
         logger.write(f'    Mapping chromosome {chrom}')
         # allocate arrays
-        n = 0
+        n = 0  # number of pairs
         if group_s is None:
-            for i in igc.phenotype_pos_df[igc.phenotype_pos_df['chr']==chrom].index:
+            for i in igc.phenotype_pos_df[igc.phenotype_pos_df['chr'] == chrom].index:
                 j = igc.cis_ranges[i]
                 n += j[1] - j[0] + 1
         else:
-            for i in igc.group_s[igc.phenotype_pos_df['chr']==chrom].drop_duplicates().index:
+            for i in igc.group_s[igc.phenotype_pos_df['chr'] == chrom].drop_duplicates().index:
                 j = igc.cis_ranges[i]
                 n += j[1] - j[0] + 1
 
@@ -208,7 +230,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         chr_res['af'] =           np.empty(n, dtype=np.float32)
         chr_res['ma_samples'] =   np.empty(n, dtype=np.int32)
         chr_res['ma_count'] =     np.empty(n, dtype=np.int32)
-        if interaction_s is None:
+        if interaction_df is None:
             chr_res['pval_nominal'] = np.empty(n, dtype=np.float64)
             chr_res['slope'] =        np.empty(n, dtype=np.float32)
             chr_res['slope_se'] =     np.empty(n, dtype=np.float32)
@@ -216,12 +238,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
             chr_res['pval_g'] =  np.empty(n, dtype=np.float64)
             chr_res['b_g'] =     np.empty(n, dtype=np.float32)
             chr_res['b_g_se'] =  np.empty(n, dtype=np.float32)
-            chr_res['pval_i'] =  np.empty(n, dtype=np.float64)
-            chr_res['b_i'] =     np.empty(n, dtype=np.float32)
-            chr_res['b_i_se'] =  np.empty(n, dtype=np.float32)
-            chr_res['pval_gi'] = np.empty(n, dtype=np.float64)
-            chr_res['b_gi'] =    np.empty(n, dtype=np.float32)
-            chr_res['b_gi_se'] = np.empty(n, dtype=np.float32)
+            chr_res['pval_i'] =  np.empty([n, ni], dtype=np.float64)
+            chr_res['b_i'] =     np.empty([n, ni], dtype=np.float32)
+            chr_res['b_i_se'] =  np.empty([n, ni], dtype=np.float32)
+            chr_res['pval_gi'] = np.empty([n, ni], dtype=np.float64)
+            chr_res['b_gi'] =    np.empty([n, ni], dtype=np.float32)
+            chr_res['b_gi_se'] = np.empty([n, ni], dtype=np.float32)
 
         start = 0
         if group_s is None:
@@ -243,14 +265,14 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     variant_ids = variant_ids[mask]
                     tss_distance = tss_distance[mask]
 
-                if interaction_s is None:
+                if interaction_df is None:
                     res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                     tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     n = len(variant_ids)
                 else:
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
                                                                  maf_threshold_interaction=maf_threshold_interaction)
-                    if genotypes_t.shape[0]>0:
+                    if genotypes_t.shape[0] > 0:
                         mask = mask_t.cpu().numpy()
                         variant_ids = variant_ids[mask]
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
@@ -261,11 +283,13 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         n = len(variant_ids)
 
                         # top association
-                        ix = np.nanargmax(np.abs(tstat[:,2]))
-                        top_s = pd.Series([phenotype_id, variant_ids[ix], tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix],
-                                           tstat[ix,0], b[ix,0], b_se[ix,0],
-                                           tstat[ix,1], b[ix,1], b_se[ix,1],
-                                           tstat[ix,2], b[ix,2], b_se[ix,2]], index=chr_res.keys())
+                        ix = np.nanargmax(np.abs(tstat[:,1+ni:]).max(1))  # top association among all interactions tested
+                        # index order: 0, 1, 1+ni, 2, 2+ni, 3, 3+ni, ...
+                        order = [0] + [i if j % 2 == 0 else i+ni for i in range(1,ni+1) for j in range(2)]
+                        top_s = [phenotype_id, variant_ids[ix], tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix]]
+                        for i in order:
+                            top_s += [tstat[ix,i], b[ix,i], b_se[ix,i]]
+                        top_s = pd.Series(top_s, index=col_order)
                         if run_eigenmt:  # compute eigenMT correction
                             top_s['tests_emt'] = eigenmt.compute_tests(genotypes_t, var_thresh=0.99, variant_window=200)
                         best_assoc.append(top_s)
@@ -279,20 +303,22 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     chr_res['af'][start:start+n] = af
                     chr_res['ma_samples'][start:start+n] = ma_samples
                     chr_res['ma_count'][start:start+n] = ma_count
-                    if interaction_s is None:
+                    if interaction_df is None:
                         chr_res['pval_nominal'][start:start+n] = tstat
                         chr_res['slope'][start:start+n] = slope
                         chr_res['slope_se'][start:start+n] = slope_se
                     else:
+                        # columns: [g, i_1 ... i_n, gi_1, ... gi_n] --> 0, 1:1+ni, 1+ni:1+2*ni
                         chr_res['pval_g'][start:start+n]  = tstat[:,0]
                         chr_res['b_g'][start:start+n]     = b[:,0]
                         chr_res['b_g_se'][start:start+n]  = b_se[:,0]
-                        chr_res['pval_i'][start:start+n]  = tstat[:,1]
-                        chr_res['b_i'][start:start+n]     = b[:,1]
-                        chr_res['b_i_se'][start:start+n]  = b_se[:,1]
-                        chr_res['pval_gi'][start:start+n] = tstat[:,2]
-                        chr_res['b_gi'][start:start+n]    = b[:,2]
-                        chr_res['b_gi_se'][start:start+n] = b_se[:,2]
+                        chr_res['pval_i'][start:start+n]  = tstat[:,1:1+ni]
+                        chr_res['b_i'][start:start+n]     = b[:,1:1+ni]
+                        chr_res['b_i_se'][start:start+n]  = b_se[:,1:1+ni]
+                        chr_res['pval_gi'][start:start+n] = tstat[:,1+ni:]
+                        chr_res['b_gi'][start:start+n]    = b[:,1+ni:]
+                        chr_res['b_gi_se'][start:start+n] = b_se[:,1+ni:]
+
                 start += n  # update pointer
         else:  # groups
             for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(chrom=chrom, verbose=verbose), k+1):
@@ -314,7 +340,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     variant_ids = variant_ids[mask]
                     tss_distance = tss_distance[mask]
 
-                if interaction_s is not None:
+                if interaction_df is not None:
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
                                                                  maf_threshold_interaction=maf_threshold_interaction)
                     mask = mask_t.cpu().numpy()
@@ -323,12 +349,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
                 n = len(variant_ids)
 
-                if genotypes_t.shape[0]>0:
+                if genotypes_t.shape[0] > 0:
                     # process first phenotype in group
                     phenotype_id = phenotype_ids[0]
                     phenotype_t = torch.tensor(phenotypes[0], dtype=torch.float).to(device)
 
-                    if interaction_s is None:
+                    if interaction_df is None:
                         res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                         tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     else:
@@ -341,7 +367,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     # iterate over remaining phenotypes in group
                     for phenotype, phenotype_id in zip(phenotypes[1:], phenotype_ids[1:]):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-                        if interaction_s is None:
+                        if interaction_df is None:
                             res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
                             tstat0, slope0, slope_se0, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         else:
@@ -351,7 +377,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                             tstat0, b0, b_se0, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
 
                         # find associations that are stronger for current phenotype
-                        if interaction_s is None:
+                        if interaction_df is None:
                             ix = np.where(np.abs(tstat0) > np.abs(tstat))[0]
                         else:
                             ix = np.where(np.abs(tstat0[:,2]) > np.abs(tstat[:,2]))[0]
@@ -359,7 +385,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         # update relevant positions
                         for j in ix:
                             px[j] = phenotype_id
-                        if interaction_s is None:
+                        if interaction_df is None:
                             tstat[ix] = tstat0[ix]
                             slope[ix] = slope0[ix]
                             slope_se[ix] = slope_se0[ix]
@@ -374,7 +400,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     chr_res['af'][start:start+n] = af
                     chr_res['ma_samples'][start:start+n] = ma_samples
                     chr_res['ma_count'][start:start+n] = ma_count
-                    if interaction_s is None:
+                    if interaction_df is None:
                         chr_res['pval_nominal'][start:start+n] = tstat
                         chr_res['slope'][start:start+n] = slope
                         chr_res['slope_se'][start:start+n] = slope_se
@@ -382,20 +408,23 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         chr_res['pval_g'][start:start+n]  = tstat[:,0]
                         chr_res['b_g'][start:start+n]     = b[:,0]
                         chr_res['b_g_se'][start:start+n]  = b_se[:,0]
-                        chr_res['pval_i'][start:start+n]  = tstat[:,1]
-                        chr_res['b_i'][start:start+n]     = b[:,1]
-                        chr_res['b_i_se'][start:start+n]  = b_se[:,1]
-                        chr_res['pval_gi'][start:start+n] = tstat[:,2]
-                        chr_res['b_gi'][start:start+n]    = b[:,2]
-                        chr_res['b_gi_se'][start:start+n] = b_se[:,2]
+                        chr_res['pval_i'][start:start+n]  = tstat[:,1:1+ni]
+                        chr_res['b_i'][start:start+n]     = b[:,1:1+ni]
+                        chr_res['b_i_se'][start:start+n]  = b_se[:,1:1+ni]
+                        chr_res['pval_gi'][start:start+n] = tstat[:,1+ni:]
+                        chr_res['b_gi'][start:start+n]    = b[:,1+ni:]
+                        chr_res['b_gi_se'][start:start+n] = b_se[:,1+ni:]
 
                     # top association for the group
-                    if interaction_s is not None:
-                        ix = np.nanargmax(np.abs(tstat[:,2]))
-                        top_s = pd.Series([chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix], tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix],
-                                           tstat[ix,0], b[ix,0], b_se[ix,0],
-                                           tstat[ix,1], b[ix,1], b_se[ix,1],
-                                           tstat[ix,2], b[ix,2], b_se[ix,2]], index=chr_res.keys())
+                    if interaction_df is not None:
+                        ix = np.nanargmax(np.abs(tstat[:,1+ni:]).max(1))  # top association among all interactions tested
+                        # index order: 0, 1, 1+ni, 2, 2+ni, 3, 3+ni, ...
+                        order = [0] + [i if j % 2 == 0 else i+ni for i in range(1,ni+1) for j in range(2)]
+                        top_s = [chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix],
+                                 tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix]]
+                        for i in order:
+                            top_s += [tstat[ix,i], b[ix,i], b_se[ix,i]]
+                        top_s = pd.Series(top_s, index=col_order)
                         top_s['num_phenotypes'] = len(phenotype_ids)
                         if run_eigenmt:  # compute eigenMT correction
                             top_s['tests_emt'] = eigenmt.compute_tests(genotypes_t, var_thresh=0.99, variant_window=200)
@@ -411,30 +440,59 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 chr_res[x] = chr_res[x][:start]
 
         if write_stats:
+            if interaction_df is not None:
+                cols = ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']
+                if ni == 1:  # squeeze columns
+                    for k in cols:
+                        chr_res[k] = chr_res[k][:,0]
+                else: # split interactions
+                    for i in range(0, ni):  # fix order
+                        for k in cols:
+                            chr_res[k.replace('i', f"i{i+1}")] = None
+                    for k in cols:
+                        for i in range(0, ni):
+                            chr_res[k.replace('i', f"i{i+1}")] = chr_res[k][:,i]
+                        del chr_res[k]
             chr_res_df = pd.DataFrame(chr_res)
-            if interaction_s is None:
+            if interaction_df is None:
                 m = chr_res_df['pval_nominal'].notnull()
                 chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
             else:
-                m = chr_res_df['pval_gi'].notnull()
-                chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
-                chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
-                chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
+                if ni == 1:
+                    m = chr_res_df['pval_gi'].notnull()
+                    chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
+                    chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
+                    chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
+                else:
+                    m = chr_res_df['pval_gi1'].notnull()
+                    chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
+                    for i in range(1, ni+1):
+                        chr_res_df.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-chr_res_df.loc[m, f'pval_i{i}'].abs(), dof)
+                        chr_res_df.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-chr_res_df.loc[m, f'pval_gi{i}'].abs(), dof)
+                    # substitute column headers
+                    chr_res_df.rename(columns=var_dict, inplace=True)
             print('    * writing output')
             chr_res_df.to_parquet(os.path.join(output_dir, f'{prefix}.cis_qtl_pairs.{chrom}.parquet'))
 
-    if interaction_s is not None and len(best_assoc) > 0:
+    if interaction_df is not None and len(best_assoc) > 0:
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
         m = best_assoc['pval_g'].notnull()
         best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
-        best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
-        best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), dof)
-        if run_eigenmt:
+        if ni == 1:
+            best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
+            best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), dof)
+        else:
+            for i in range(1, ni+1):
+                best_assoc.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-best_assoc.loc[m, f'pval_i{i}'].abs(), dof)
+                best_assoc.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-best_assoc.loc[m, f'pval_gi{i}'].abs(), dof)
+        if run_eigenmt and ni == 1:  # leave correction of specific p-values up to user for now (TODO)
             if group_s is None:
                 best_assoc['pval_emt'] = np.minimum(best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
             else:
                 best_assoc['pval_emt'] = np.minimum(best_assoc['num_phenotypes']*best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
             best_assoc['pval_adj_bh'] = eigenmt.padjust_bh(best_assoc['pval_emt'])
+        if ni > 1:  # substitute column headers
+            best_assoc.rename(columns=var_dict, inplace=True)
         if write_top:
             best_assoc.to_csv(os.path.join(output_dir, f'{prefix}.cis_qtl_top_assoc.txt.gz'),
                               sep='\t', float_format='%.6g')

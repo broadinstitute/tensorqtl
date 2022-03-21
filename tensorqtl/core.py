@@ -80,6 +80,7 @@ def get_allele_stats(genotype_t):
     b = (genotype_t < 1.5).sum(1).int()
     ma_samples_t = torch.where(ix_t, a, b)
     a = (genotype_t * m.float()).sum(1).int()
+    # a = (genotype_t * m.float()).sum(1).round().int()  # round for missing/imputed genotypes
     ma_count_t = torch.where(ix_t, a, n2-a)
     return af_t, ma_samples_t, ma_count_t
 
@@ -153,53 +154,67 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer=None,
                                   return_sparse=False, tstat_threshold=None, variant_ids=None):
     """
-    genotypes_t:   [num_genotypes x num_samples]
-    phenotypes_t:   [num_phenotypes x num_samples]
-    interaction_t: [1 x num_samples]
+    Solve y ~ g + i + g:i, where i is an interaction vector or matrix
+
+    Inputs
+      genotypes_t:   [num_genotypes x num_samples]
+      phenotypes_t:  [num_phenotypes x num_samples]
+      interaction_t: [num_samples x num_interactions]
+
+    Outputs
+    if return_sparse is False (default):
+      tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
+      tstat_t, b_t, b_se_t columns: [g, i_1 ... i_n, gi_1, ... gi_n]
+                                    where n is the number of interactions
+    if return_sparse is True:
+      tstat_g_t, tstat_i_t, tstat_gi_t, af_t, ix
+      ix: indexes [genotype, phenotype]
     """
     ng, ns = genotypes_t.shape
     nps = phenotypes_t.shape[0]
+    ni = interaction_t.shape[1]
 
     # centered inputs
-    g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)
-    gi_t = genotypes_t * interaction_t
-    gi0_t = gi_t - gi_t.mean(1, keepdim=True)
-    i0_t = interaction_t - interaction_t.mean()
-    p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)
+    g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)  # genotypes x samples
+    gi_t = (genotypes_t.unsqueeze(2) * interaction_t.unsqueeze(0))  # genotypes x samples x interactions
+    gi0_t = gi_t - gi_t.mean(1, keepdim=True)  # mean across samples
+    i0_t = interaction_t - interaction_t.mean(0)  # samples x interactions
+    p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)  # 1 x samples
 
     # residualize rows
     if residualizer is not None:
-        g0_t = residualizer.transform(g0_t, center=False)
-        gi0_t = residualizer.transform(gi0_t, center=False)
         p0_t = residualizer.transform(p0_t, center=False)
-        i0_t = residualizer.transform(i0_t, center=False)
-    i0_t = i0_t.repeat(ng, 1)
+        g0_t = residualizer.transform(g0_t, center=False)
+        i0_t = residualizer.transform(i0_t.t(), center=False).t()
+        for k in range(i0_t.shape[1]):
+            gi0_t[..., k] = residualizer.transform(gi0_t[..., k], center=False)
+    i0_t = i0_t.repeat(ng, 1, 1)
 
     # regression (in float; loss of precision may occur in edge cases)
-    X_t = torch.stack([g0_t, i0_t, gi0_t], 2)  # ng x ns x 3
+    X_t = torch.cat([g0_t.unsqueeze(-1), i0_t, gi0_t], 2)  # ng x ns x (1+2*ni)
     try:
-        Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x 3 x 3
+        Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x (1+2*ni) x (1+2*ni)
     except Exception as e:
         if variant_ids is not None and len(e.args) >= 1:
             i = int(re.findall('For batch (\d+)', str(e))[0])
-            e.args = (e.args[0] + '\n    Likely problematic variant: {} '.format(variant_ids[i]),) + e.args[1:]
+            e.args = (e.args[0] + f'\n    Likely problematic variant: {variant_ids[i]} ',) + e.args[1:]
         raise
 
-    # Xinv = tf.linalg.inv(tf.matmul(X_t, X_t, transpose_a=True))  # ng x 3 x 3
-    # p0_tile_t = tf.tile(tf.expand_dims(p0_t, 0), [ng,1,1])  # ng x np x ns
     p0_tile_t = p0_t.unsqueeze(0).expand([ng, *p0_t.shape])  # ng x np x ns
 
     # calculate b, b_se
-    # [(ng x 3 x 3) x (ng x 3 x ns)] x (ng x ns x np) = (ng x 3 x np)
+    # [(ng x nb x nb) x (ng x nb x ns)] x (ng x ns x np) = (ng x nb x np)
     b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), torch.transpose(p0_tile_t, 1, 2))
+    nb = b_t.shape[1]
+    # residualizer.dof already includes intercept, b_g, add b_i and b_gi for each interaction
     if residualizer is not None:
-        dof = residualizer.dof - 2
+        dof = residualizer.dof - 2*ni
     else:
-        dof = phenotypes_t.shape[1] - 4
-    if nps==1:
+        dof = phenotypes_t.shape[1] - 2 - 2*ni
+    if nps == 1:  # single phenotype case
         r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
         rss_t = (r_t*r_t).sum(1)
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()] * rss_t.unsqueeze(1) / dof)
+        b_se_t = torch.sqrt(Xinv[:, torch.eye(nb, dtype=torch.uint8).bool()] * rss_t.unsqueeze(1) / dof)
         b_t = b_t.squeeze(2)
         # r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
         # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
@@ -209,30 +224,22 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         # convert to ng x np x 3??
         r_t = torch.matmul(X_t, b_t) - torch.transpose(p0_tile_t, 1, 2)  # (ng x ns x np)
         rss_t = (r_t*r_t).sum(1)  # ng x np
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(3, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
+        b_se_t = torch.sqrt(Xinv[:, torch.eye(nb, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
         # b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
 
-    tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x 3 x np)
+    tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x nb x np)
 
-    # calculate MAF
-    n2 = 2*ns
-    af_t = genotypes_t.sum(1) / n2
     # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
     if not return_sparse:
         # calculate pval
         # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))  # (ng x 3 x np)
-
-        # calculate MA samples and counts
-        ix_t = af_t <= 0.5
-        m = genotypes_t > 0.5
-        a = m.sum(1).int()
-        b = (genotypes_t < 1.5).sum(1).int()
-        ma_samples_t = torch.where(ix_t, a, b)
-        a = (genotypes_t * m.float()).sum(1).round().int()  # round for missing/imputed genotypes
-        ma_count_t = torch.where(ix_t, a, n2-a)
+        af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
         return tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
 
     else:  # sparse output
+        if ni > 1:
+            raise NotImplementedError("Sparse mode not yet supported for >1 interactions")
+        af_t = genotypes_t.sum(1) / (2*ns)
         tstat_g_t =  tstat_t[:,0,:]  # genotypes x phenotypes
         tstat_i_t =  tstat_t[:,1,:]
         tstat_gi_t = tstat_t[:,2,:]
