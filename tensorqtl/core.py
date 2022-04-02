@@ -196,7 +196,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
         Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x (1+2*ni) x (1+2*ni)
     except Exception as e:
         if variant_ids is not None and len(e.args) >= 1:
-            i = int(re.findall('For batch (\d+)', str(e))[0])
+            i = int(re.findall('Batch element (\d+)', str(e))[0])
             e.args = (e.args[0] + f'\n    Likely problematic variant: {variant_ids[i]} ',) + e.args[1:]
         raise
 
