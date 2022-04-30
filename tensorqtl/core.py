@@ -1,3 +1,4 @@
+from calendar import c
 import torch
 import numpy as np
 import pandas as pd
@@ -101,12 +102,39 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
     # filter monomorphic sites (to avoid colinearity)
     mask_t = ~((genotypes_t==0).all(1) | (genotypes_t==1).all(1) | (genotypes_t==2).all(1))
     if interaction_mask_t is not None:
-        upper_t = calculate_maf(genotypes_t[:, interaction_mask_t]) >= maf_threshold_interaction - 1e-7
-        lower_t = calculate_maf(genotypes_t[:,~interaction_mask_t]) >= maf_threshold_interaction - 1e-7
-        mask_t = mask_t & upper_t & lower_t
+        if interaction_mask_t.dim == 1:
+            upper_t = calculate_maf(genotypes_t[:, interaction_mask_t]) >= maf_threshold_interaction - 1e-7
+            lower_t = calculate_maf(genotypes_t[:,~interaction_mask_t]) >= maf_threshold_interaction - 1e-7
+            mask_t = mask_t & upper_t & lower_t
+
     genotypes_t = genotypes_t[mask_t]
     return genotypes_t, mask_t
 
+def filter_term_samples(genotypes_t, term_mask_t, num_samples_per_gt=3):
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # filter monomorphic sites (to avoid colinearity)
+    mask_t = ~((genotypes_t==0).all(1) | (genotypes_t==1).all(1) | (genotypes_t==2).all(1))
+
+    # terms matrix: ng x n interactions
+    terms_mask_t = torch.zeros(genotypes_t.shape[0], term_mask_t.shape[1], dtype=torch.bool).to(device)
+
+    if term_mask_t.dim == 1:
+        term_mask_t = term_mask_t.unsqueeze(-1)
+
+    # Determine which terms have at least 'num_samples_per_gt' samples for each genotype
+    for i in range(term_mask_t.shape[1]):
+        rr = ((genotypes_t[:, term_mask_t[:,i]] == 0).sum(1) >= num_samples_per_gt)
+        ra = ((genotypes_t[:, term_mask_t[:,i]] == 1).sum(1) >= num_samples_per_gt)
+        aa = ((genotypes_t[:, term_mask_t[:,i]] == 2).sum(1) >= num_samples_per_gt)
+        terms_mask_t[:,i] = rr & ra & aa
+
+    # Filter out monomorphic sites and those that do not have enough data per term
+    mask_t = mask_t & (terms_mask_t.sum(1) == term_mask_t.shape[1])
+
+    genotypes_t = genotypes_t[mask_t]
+    return genotypes_t, mask_t
 
 def impute_mean(genotypes_t):
     """Impute missing genotypes to mean"""
@@ -151,105 +179,81 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
         return torch.mm(genotype_res_t, phenotype_res_t.t())
 
 
-def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer=None,
-                                  return_sparse=False, tstat_threshold=None, variant_ids=None):
+
+def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t, 
+                                  g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
+                                  residualizer=None, center=True, variant_ids=None):
     """
     Solve y ~ g + i + g:i, where i is an interaction vector or matrix
 
     Inputs
       genotypes_t:   [num_genotypes x num_samples]
       phenotypes_t:  [num_phenotypes x num_samples]
-      interaction_t: [num_samples x num_interactions]
+      design_t: [num_samples x interactions] <- dummy matrix
+      g_idx_t: position of genotype column in design matrix
+      g_interaction_terms_t: positions of terms with a genetic component
+      terms_to_residualize_t: position of terms to center and residualize
 
     Outputs
-    if return_sparse is False (default):
-      tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
-      tstat_t, b_t, b_se_t columns: [g, i_1 ... i_n, gi_1, ... gi_n]
-                                    where n is the number of interactions
-    if return_sparse is True:
-      tstat_g_t, tstat_i_t, tstat_gi_t, af_t, ix
-      ix: indexes [genotype, phenotype]
+    tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
+    tstat_t, b_t, b_se_t columns: [g, i_1 ... i_n, gi_1, ... gi_n]
+                                where n is the number of interactions from 
+                                design matrix
     """
+
     ng, ns = genotypes_t.shape
-    nps = phenotypes_t.shape[0]
-    ni = interaction_t.shape[1]
 
-    # centered inputs
-    g0_t = genotypes_t - genotypes_t.mean(1, keepdim=True)  # genotypes x samples
-    gi_t = (genotypes_t.unsqueeze(2) * interaction_t.unsqueeze(0))  # genotypes x samples x interactions
-    gi0_t = gi_t - gi_t.mean(1, keepdim=True)  # mean across samples
-    i0_t = interaction_t - interaction_t.mean(0)  # samples x interactions
-    p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)  # 1 x samples
+    interaction_t = torch.clone(design_t).unsqueeze(0).repeat([ng, 1, 1])
 
-    # residualize rows
-    if residualizer is not None:
-        p0_t = residualizer.transform(p0_t, center=False)
-        g0_t = residualizer.transform(g0_t, center=False)
-        i0_t = residualizer.transform(i0_t.t(), center=False).t()
-        for k in range(i0_t.shape[1]):
-            gi0_t[..., k] = residualizer.transform(gi0_t[..., k], center=False)
-    i0_t = i0_t.repeat(ng, 1, 1)
+    # apply genotypes to terms w/ genotype component
+    interaction_t[..., g_idx_t] = genotypes_t
+    interaction_t[..., g_interaction_terms_t] *= genotypes_t.unsqueeze(-1)
+   
+    # center and residualize non-categorical variables and those with genotype component
+    for i in terms_to_residualize_t:
+        if center:
+            interaction_t[..., i] -= interaction_t[..., i].mean(1, keepdim=True)
+        if residualizer is not None:
+            interaction_t[..., i] = residualizer.transform(interaction_t[..., i], center=False)
+    
+    X = torch.clone(interaction_t)
+    nterms = X.shape[2]
 
-    # regression (in float; loss of precision may occur in edge cases)
-    X_t = torch.cat([g0_t.unsqueeze(-1), i0_t, gi0_t], 2)  # ng x ns x (1+2*ni)
+    # center phenotypes
+    Y = phenotypes_t - phenotypes_t.mean(1, keepdim=True)  # 1 x samples
+    Y = Y.unsqueeze(0).expand([ng, *Y.shape])  # ng x np x ns
+    Y = torch.transpose(Y, 1, 2)
+
+    # matrix regession
+    XtX = torch.matmul(torch.transpose(X, 1, 2), X)
+    XtY = torch.matmul(torch.transpose(X, 1, 2), Y)
+
     try:
-        Xinv = torch.matmul(torch.transpose(X_t, 1, 2), X_t).inverse() # ng x (1+2*ni) x (1+2*ni)
+        XtXinv = XtX.inverse()
     except Exception as e:
         if variant_ids is not None and len(e.args) >= 1:
             i = int(re.findall('Batch element (\d+)', str(e))[0])
             e.args = (e.args[0] + f'\n    Likely problematic variant: {variant_ids[i]} ',) + e.args[1:]
         raise
 
-    p0_tile_t = p0_t.unsqueeze(0).expand([ng, *p0_t.shape])  # ng x np x ns
+    b_t = torch.matmul(XtXinv, XtY).squeeze(-1)
 
-    # calculate b, b_se
-    # [(ng x nb x nb) x (ng x nb x ns)] x (ng x ns x np) = (ng x nb x np)
-    b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), torch.transpose(p0_tile_t, 1, 2))
-    nb = b_t.shape[1]
-    # residualizer.dof already includes intercept, b_g, add b_i and b_gi for each interaction
+    hat_matrix_t = torch.matmul(torch.matmul(X, XtXinv), torch.transpose(X, 1, 2))
+    predicted_t = torch.matmul(hat_matrix_t, Y)
+    resids = Y - predicted_t
+
+    dof = ns - nterms
     if residualizer is not None:
-        dof = residualizer.dof - 2*ni
-    else:
-        dof = phenotypes_t.shape[1] - 2 - 2*ni
-    if nps == 1:  # single phenotype case
-        r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
-        rss_t = (r_t*r_t).sum(1)
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(nb, dtype=torch.uint8).bool()] * rss_t.unsqueeze(1) / dof)
-        b_t = b_t.squeeze(2)
-        # r_t = tf.squeeze(tf.matmul(X_t, b_t)) - p0_t  # (ng x ns x 3) x (ng x 3 x 1)
-        # rss_t = tf.reduce_sum(tf.multiply(r_t, r_t), axis=1)
-        # b_se_t = tf.sqrt( tf.matrix_diag_part(Xinv) * tf.expand_dims(rss_t, 1) / dof )
-    else:
-        # b_t = tf.matmul(p0_tile_t, tf.matmul(Xinv, X_t, transpose_b=True), transpose_b=True)
-        # convert to ng x np x 3??
-        r_t = torch.matmul(X_t, b_t) - torch.transpose(p0_tile_t, 1, 2)  # (ng x ns x np)
-        rss_t = (r_t*r_t).sum(1)  # ng x np
-        b_se_t = torch.sqrt(Xinv[:, torch.eye(nb, dtype=torch.uint8).bool()].unsqueeze(-1).repeat([1,1,nps]) * rss_t.unsqueeze(1).repeat([1,3,1]) / dof)
-        # b_se_t = tf.sqrt(tf.tile(tf.expand_dims(tf.matrix_diag_part(Xinv), 2), [1,1,nps]) * tf.tile(tf.expand_dims(rss_t, 1), [1,3,1]) / dof) # (ng x 3) -> (ng x 3 x np)
+        dof -= residualizer.dof
+   
+    ss = (1.0/dof) * torch.matmul(torch.transpose(resids, 1, 2), resids)
 
-    tstat_t = (b_t.double() / b_se_t.double()).float()  # (ng x nb x np)
+    b_se_t = torch.sqrt(XtXinv[:, torch.eye(X.shape[2], dtype=torch.bool)] * ss.squeeze(-1))
+    tstat_t = b_t/b_se_t
 
-    # tdist = tfp.distributions.StudentT(np.float64(dof), loc=np.float64(0.0), scale=np.float64(1.0))
-    if not return_sparse:
-        # calculate pval
-        # pval_t = tf.scalar_mul(2, tdist.cdf(-tf.abs(tstat_t)))  # (ng x 3 x np)
-        af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
-        return tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
-
-    else:  # sparse output
-        if ni > 1:
-            raise NotImplementedError("Sparse mode not yet supported for >1 interactions")
-        af_t = genotypes_t.sum(1) / (2*ns)
-        tstat_g_t =  tstat_t[:,0,:]  # genotypes x phenotypes
-        tstat_i_t =  tstat_t[:,1,:]
-        tstat_gi_t = tstat_t[:,2,:]
-        m = tstat_gi_t.abs() >= tstat_threshold
-        tstat_g_t = tstat_g_t[m]
-        tstat_i_t = tstat_i_t[m]
-        tstat_gi_t = tstat_gi_t[m]
-        ix = m.nonzero(as_tuple=False)  # indexes: [genotype, phenotype]
-        return tstat_g_t, tstat_i_t, tstat_gi_t, af_t[ix[:,0]], ix
-
+    af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t) # allele freqs are wrong because we have same inidviduals for interaction studies
+    
+    return tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
 
 def linreg(X_t, y_t, dtype=torch.float64):
     """
