@@ -168,11 +168,6 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     design_info = design.design_info
 
     nterms = len(design_info.column_names)
-    
-    logger.write(f'  * {formula}')
-    logger.write(f'  * {ni} interaction terms')
-    for term in design_info.column_names:
-        logger.write(f'     {term}')
 
     g_idx = -1
     g_interaction_terms = np.zeros(nterms, dtype=bool)
@@ -210,9 +205,15 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     # design matrix template
     design_t = torch.tensor(np.asarray(design), dtype=torch.float32).to(device)
     filter_term_mask_t = design_t[...,categorial_terms_t].bool()
+
+    logger.write(f'  * {formula}')
+    logger.write(f'  * {nterms} interaction terms')
+    for term in design_info.column_names:
+        logger.write(f'     {term}')
+
     ni = design_t.shape[1]
 
-    dof = dof - ni
+    dof = dof - nterms
 
     start_time = time.time()
 
