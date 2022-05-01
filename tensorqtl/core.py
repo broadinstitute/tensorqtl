@@ -203,20 +203,19 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
 
     ng, ns = genotypes_t.shape
 
-    interaction_t = torch.clone(design_t).unsqueeze(0).repeat([ng, 1, 1])
+    X = torch.clone(design_t).unsqueeze(0).repeat([ng, 1, 1])
 
     # apply genotypes to terms w/ genotype component
-    interaction_t[..., g_idx_t] = genotypes_t
-    interaction_t[..., g_interaction_terms_t] *= genotypes_t.unsqueeze(-1)
+    X[..., g_idx_t] = genotypes_t
+    X[..., g_interaction_terms_t] *= genotypes_t.unsqueeze(-1)
    
     # center and residualize non-categorical variables and those with genotype component
     for i in terms_to_residualize_t:
         if center:
-            interaction_t[..., i] -= interaction_t[..., i].mean(1, keepdim=True)
+            X[..., i] -= X[..., i].mean(1, keepdim=True)
         if residualizer is not None:
-            interaction_t[..., i] = residualizer.transform(interaction_t[..., i], center=False)
-    
-    X = torch.clone(interaction_t)
+            X[..., i] = residualizer.transform(X[..., i], center=False)
+
     nterms = X.shape[2]
 
     Y = phenotypes_t 
@@ -255,7 +254,7 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
    
     ss = (1.0/dof) * torch.matmul(torch.transpose(resids, 1, 2), resids)
 
-    b_se_t = torch.sqrt(XtXinv[:, torch.eye(X.shape[2], dtype=torch.bool)] * ss.squeeze(-1))
+    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)] * ss.squeeze(-1))
     tstat_t = b_t/b_se_t
 
     af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t) # allele freqs are wrong because we have same inidviduals for interaction studies
