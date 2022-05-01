@@ -1,3 +1,4 @@
+from types import DynamicClassAttribute
 import torch
 import numpy as np
 import pandas as pd
@@ -138,7 +139,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
 
 def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_pos_df, 
-                            sample_info_df, formula='p ~ g', covariates_df=None, window=1_000_000,
+                            sample_info_df, formula='p ~ g - 1', covariates_df=None, window=1_000_000,
                             prefix='qtl', output_dir='.', logger=None, verbose=True):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -165,8 +166,8 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
 
-    design = dmatrices(formula, data=sample_info_df.assign(p=1, g=1))[1]
-    design_info = design.design_info
+    design_mat = dmatrices(formula, data=sample_info_df.assign(p=1, g=1))[1]
+    design_info = design_mat.design_info
 
     ni = len(design_info.column_names)
 
@@ -204,7 +205,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     g_idx_t = torch.tensor(g_idx)
 
     # design matrix template
-    design_t = torch.tensor(np.asarray(design), dtype=torch.float32).to(device)
+    design_t = torch.tensor(np.asarray(design_mat), dtype=torch.float32).to(device)
     filter_term_mask_t = design_t[...,categorial_terms_t].bool()
 
     logger.write(f'  * {formula}')
@@ -214,7 +215,11 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         t = term.replace('T.', '')
         logger.write(f'     - {t}')
 
-    dof = dof - ni
+    dfe = design_mat.shape[0] - ni
+    dfm = ni - 1
+    if residualizer is not None:
+        dfe -= residualizer.n
+        dfm += residualizer.n
 
     start_time = time.time()
 
@@ -240,6 +245,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         chr_res['pval_i'] =       np.empty([n, ni], dtype=np.float64)
         chr_res['b_i'] =          np.empty([n, ni], dtype=np.float32)
         chr_res['b_se_i'] =       np.empty([n, ni], dtype=np.float32)
+        chr_res['f'] =          np.empty(n, dtype=np.float32)
 
         start = 0
 
@@ -265,7 +271,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                                                         g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
                                                         residualizer=residualizer, variant_ids=variant_ids)
 
-                    tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                    f, tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     tss_distance = tss_distance[mask]
                     n = len(variant_ids)
 
@@ -285,7 +291,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                 chr_res['pval_i'][start:start+n]  = tstat[:,:]
                 chr_res['b_i'][start:start+n]     = b[:,:]
                 chr_res['b_se_i'][start:start+n]  = b_se[:,:]
-
+                chr_res['f'][start:start+n]  = f
             start += n
         
         logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
@@ -304,10 +310,13 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
             for i in range(0, ni):
                 chr_res[k.replace('i', f"i{i}")] = chr_res[k][:,i]
             del chr_res[k]
+
         chr_res_df = pd.DataFrame(chr_res)
 
         for i in range(0, ni):
-            chr_res_df.loc[:, f'pval_i{i}'] =  2*stats.t.cdf(-chr_res_df.loc[:, f'pval_i{i}'].abs(), dof)
+            chr_res_df.loc[:, f'pval_i{i}'] =  2*stats.t.cdf(-chr_res_df.loc[:, f'pval_i{i}'].abs(), dfe)
+
+        chr_res_df = chr_res_df.assign(pval_f=stats.f.sf(chr_res_df.loc[:, 'f'], dfm, dfe))
 
         var_dict = []
         for v, i in six.iteritems(design_info.column_name_indexes):

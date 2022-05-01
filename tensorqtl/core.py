@@ -52,6 +52,7 @@ class Residualizer(object):
         # center and orthogonalize
         self.Q_t, _ = torch.linalg.qr(C_t - C_t.mean(0))
         self.dof = C_t.shape[0] - 2 - C_t.shape[1]
+        self.n = C_t.shape[1] + 2
 
     def transform(self, M_t, center=True):
         """Residualize rows of M wrt columns of C"""
@@ -229,6 +230,12 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     Y = Y.unsqueeze(0).expand([ng, *Y.shape])  # ng x np x ns
     Y = torch.transpose(Y, 1, 2)
 
+    dfe = ns - nterms
+    dfm = nterms - 1
+    if residualizer is not None:
+        dfe -= residualizer.n
+        dfm += residualizer.n
+
     # matrix regession
     XtX = torch.matmul(torch.transpose(X, 1, 2), X)
     XtY = torch.matmul(torch.transpose(X, 1, 2), Y)
@@ -245,21 +252,25 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
 
     hat_matrix_t = torch.matmul(torch.matmul(X, XtXinv), torch.transpose(X, 1, 2))
     predicted_t = torch.matmul(hat_matrix_t, Y)
+    
     resids = Y - predicted_t
+    sse = torch.matmul(torch.transpose(resids, 1, 2), resids)
+    mse = sse / dfe
 
-    if residualizer is not None:
-        dof = residualizer.dof - nterms
-    else:
-        dof = ns - nterms
-   
-    ss = (1.0/dof) * torch.matmul(torch.transpose(resids, 1, 2), resids)
+    # todo: residuals from reduced model
 
-    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)] * ss.squeeze(-1))
+    resids = predicted_t - Y.mean(1, keepdims=True)
+    ssm = torch.matmul(torch.transpose(resids, 1, 2), resids)
+    msm = ssm / dfm
+
+    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)] * mse.squeeze(-1))
     tstat_t = b_t/b_se_t
+
+    f_t = (msm/mse).flatten()
 
     af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t) # allele freqs are wrong because we have same inidviduals for interaction studies
     
-    return tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
+    return f_t, tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
 
 def linreg(X_t, y_t, dtype=torch.float64):
     """
