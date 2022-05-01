@@ -182,7 +182,7 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t, 
                                   g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
-                                  residualizer=None, center=True, variant_ids=None):
+                                  residualizer=None, center=False, variant_ids=None):
     """
     Solve y ~ g + i + g:i, where i is an interaction vector or matrix
 
@@ -219,8 +219,14 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     X = torch.clone(interaction_t)
     nterms = X.shape[2]
 
-    # center phenotypes
-    Y = phenotypes_t - phenotypes_t.mean(1, keepdim=True)  # 1 x samples
+    Y = phenotypes_t 
+    
+    # center and residualize phenotypes matrix
+    if center:
+        Y -= Y.mean(1, keepdim=True)  # 1 x samples
+    if residualizer is not None:
+        Y = residualizer.transform(Y, center=False)
+
     Y = Y.unsqueeze(0).expand([ng, *Y.shape])  # ng x np x ns
     Y = torch.transpose(Y, 1, 2)
 
@@ -242,9 +248,10 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     predicted_t = torch.matmul(hat_matrix_t, Y)
     resids = Y - predicted_t
 
-    dof = ns - nterms
     if residualizer is not None:
-        dof -= residualizer.dof
+        dof = residualizer.dof - nterms
+    else:
+        dof = ns - nterms
    
     ss = (1.0/dof) * torch.matmul(torch.transpose(resids, 1, 2), resids)
 

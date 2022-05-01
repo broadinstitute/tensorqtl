@@ -155,10 +155,11 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         assert np.all(phenotype_df.columns==covariates_df.index)
         logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
-        dof = dof - residualizer.dof
+        dof = residualizer.dof
     else:
         residualizer = None
-    
+        dof = phenotype_df.shape[1]
+
     logger.write(f'  * {variant_df.shape[0]} variants')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
@@ -167,12 +168,12 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     design = dmatrices(formula, data=sample_info_df.assign(p=1, g=1))[1]
     design_info = design.design_info
 
-    nterms = len(design_info.column_names)
+    ni = len(design_info.column_names)
 
     g_idx = -1
-    g_interaction_terms = np.zeros(nterms, dtype=bool)
-    continuous_terms = np.zeros(nterms, dtype=bool)
-    categorical_terms = np.zeros(nterms, dtype=bool)
+    g_interaction_terms = np.zeros(ni, dtype=bool)
+    continuous_terms = np.zeros(ni, dtype=bool)
+    categorical_terms = np.zeros(ni, dtype=bool)
 
     # todo: clean this code up
     for term_name, span in six.iteritems(design_info.term_name_slices):
@@ -207,13 +208,13 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     filter_term_mask_t = design_t[...,categorial_terms_t].bool()
 
     logger.write(f'  * {formula}')
-    logger.write(f'  * {nterms} interaction terms')
+    logger.write(f'     - {len(design_info.term_names)} terms')
+    logger.write(f'  * {ni} interactions:')
     for term in design_info.column_names:
-        logger.write(f'     {term}')
+        t = term.replace('T.', '')
+        logger.write(f'     - {t}')
 
-    ni = design_t.shape[1]
-
-    dof = dof - nterms
+    dof = dof - ni
 
     start_time = time.time()
 
@@ -238,7 +239,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         chr_res['ma_count'] =     np.empty(n, dtype=np.int32)
         chr_res['pval_i'] =       np.empty([n, ni], dtype=np.float64)
         chr_res['b_i'] =          np.empty([n, ni], dtype=np.float32)
-        chr_res['b_i_se'] =       np.empty([n, ni], dtype=np.float32)
+        chr_res['b_se_i'] =       np.empty([n, ni], dtype=np.float32)
 
         start = 0
 
@@ -283,7 +284,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                 chr_res['ma_count'][start:start+n] = ma_count
                 chr_res['pval_i'][start:start+n]  = tstat[:,:]
                 chr_res['b_i'][start:start+n]     = b[:,:]
-                chr_res['b_i_se'][start:start+n]  = b_se[:,:]
+                chr_res['b_se_i'][start:start+n]  = b_se[:,:]
 
             start += n
         
@@ -295,14 +296,14 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                 chr_res[x] = chr_res[x][:start]
         
         # split columns
-        cols = ['pval_i', 'b_i', 'b_i_se']
+        cols = ['pval_i', 'b_i', 'b_se_i']
         for i in range(0, ni):  # fix order
             for k in cols:
-                chr_res[k.replace('i', f"i{i+1}")] = None
-            for k in cols:
-                for i in range(0, ni):
-                    chr_res[k.replace('i', f"i{i+1}")] = chr_res[k][:,i]
-                del chr_res[k]
+                chr_res[k.replace('i', f"i{i}")] = None
+        for k in cols:
+            for i in range(0, ni):
+                chr_res[k.replace('i', f"i{i}")] = chr_res[k][:,i]
+            del chr_res[k]
         chr_res_df = pd.DataFrame(chr_res)
 
         for i in range(0, ni):
@@ -310,8 +311,9 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
 
         var_dict = []
         for v, i in six.iteritems(design_info.column_name_indexes):
-            for c in ['pval_i', 'b_i', 'b_i_se']:
-                var_dict.append((c.replace('_i', f'_i{i}'), c.replace('_i', f'_{v}')))
+            t = v.replace('T.', '')
+            for c in ['pval_i', 'b_i', 'b_se_i']:
+                var_dict.append((c.replace('_i', f'_i{i}'), c.replace('_i', f'_{t}')))
         var_dict = dict(var_dict)
 
         # substitute column headers
@@ -320,7 +322,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         print('    * writing output')
         chr_res_df.to_parquet(os.path.join(output_dir, f'{prefix}.cis_qtl_pairs.{chrom}.parquet'))
 
-        logger.write('done.')
+    logger.write('done.')
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 covariates_df=None, maf_threshold=0, interaction_df=None, maf_threshold_interaction=0.05,
