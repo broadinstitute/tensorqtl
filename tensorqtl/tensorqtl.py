@@ -162,10 +162,13 @@ def main():
             pval_threshold = 1e-5
             logger.write(f'  * p-value threshold: {pval_threshold:.2g}')
 
-        if interaction_df.shape[1] > 1:
-            raise NotImplementedError('trans-QTL mapping currently only supports a single interaction.')
+        if interaction_df is not None:
+            if interaction_df.shape[1] > 1:
+                raise NotImplementedError('trans-QTL mapping currently only supports a single interaction.')
+            else:
+                interaction_df = interaction_df.squeeze('columns')
 
-        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_df.squeeze('columns'),
+        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_df,
                                   return_sparse=return_sparse, pval_threshold=pval_threshold,
                                   maf_threshold=maf_threshold, batch_size=args.batch_size,
                                   return_r2=args.return_r2, logger=logger)
