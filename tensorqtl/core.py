@@ -256,8 +256,6 @@ def linreg(X_t, y_t, dtype=torch.float64):
     Robust linear regression. Solves y = Xb, standardizing X.
     The first column of X must be the intercept.
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     x_std_t = X_t.std(0)
     x_mean_t = X_t.mean(0)
     x_std_t[0] = 1
@@ -269,14 +267,14 @@ def linreg(X_t, y_t, dtype=torch.float64):
     # regression
     XtX_t = torch.matmul(Xtilde_t.T, Xtilde_t)
     Xty_t = torch.matmul(Xtilde_t.T, y_t)
-    b_t, _ = torch.solve(Xty_t.unsqueeze(-1), XtX_t)
+    b_t = torch.linalg.solve(XtX_t, Xty_t.unsqueeze(-1))
     b_t = b_t.squeeze()
 
     # compute s.e.
     dof = X_t.shape[0] - X_t.shape[1]
     r_t = y_t - torch.matmul(Xtilde_t, b_t)
     sigma2_t = (r_t*r_t).sum() / dof
-    XtX_inv_t, _ = torch.solve(torch.eye(X_t.shape[1], dtype=dtype).to(device), XtX_t)
+    XtX_inv_t = torch.linalg.solve(XtX_t, torch.eye(X_t.shape[1], dtype=dtype).to(X_t.device))
     var_b_t = sigma2_t * XtX_inv_t
     b_se_t = torch.sqrt(torch.diag(var_b_t))
 

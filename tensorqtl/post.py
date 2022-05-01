@@ -11,6 +11,7 @@ from datetime import datetime
 sys.path.insert(1, os.path.dirname(__file__))
 from core import SimpleLogger, Residualizer, center_normalize, impute_mean, get_allele_stats
 import mixqtl
+import qtl.genotype as gt
 
 
 has_rpy2 = False
@@ -18,7 +19,7 @@ e = subprocess.call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=sub
 try:
     import rpy2
     import rfunc
-    if e==0:
+    if e == 0:
         has_rpy2 = True
 except:
     pass
@@ -34,7 +35,7 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     logger.write('Computing q-values')
     logger.write(f'  * Number of phenotypes tested: {res_df.shape[0]}')
     r = stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]
-    logger.write(f'  * Correlation between Beta-approximated and empirical p-values: : {r:.4f}')
+    logger.write(f'  * Correlation between Beta-approximated and empirical p-values: {r:.4f}')
 
     # calculate q-values
     if qvalue_lambda is None:
@@ -47,8 +48,8 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
     logger.write(f"  * QTL phenotypes @ FDR {fdr:.2f}: {(res_df['qval'] <= fdr).sum()}")
 
     # determine global min(p) significance threshold and calculate nominal p-value threshold for each gene
-    lb = res_df.loc[res_df['qval']<=fdr, 'pval_beta'].sort_values()
-    ub = res_df.loc[res_df['qval']>fdr, 'pval_beta'].sort_values()
+    lb = res_df.loc[res_df['qval'] <= fdr, 'pval_beta'].sort_values()
+    ub = res_df.loc[res_df['qval'] > fdr, 'pval_beta'].sort_values()
 
     if lb.shape[0] > 0:  # significant phenotypes
         lb = lb[-1]
@@ -61,11 +62,15 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
         res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
-def calculate_afc(gene_ids, variant_ids, counts_df, genotype_df, covariates_df=None,
-                  select_covariates=True, imputation='offset', count_threshold=0):
+def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_df=None,
+                  select_covariates=True, imputation='offset', count_threshold=0, verbose=True):
     """
     Calculate allelic fold-change (aFC) for variant-gene pairs
 
+    Inputs
+      assoc_df: dataframe containing variant-gene associations, must have 'gene_id'
+                and 'variant_id' columns. If multiple variants/gene are detected, effects
+                are estimated jointly.
       genotype_df: genotype dosages
       counts_df: read counts scaled with DESeq size factors. Zeros are imputed using
                  log(counts + 1) (imputation='offset'; default) or with half-minimum
@@ -78,37 +83,39 @@ def calculate_afc(gene_ids, variant_ids, counts_df, genotype_df, covariates_df=N
       [2] Liang et al., 2021 (10.1038/s41467-021-21592-8)
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    assert len(variant_ids) == len(gene_ids)
 
-    genotypes_t = torch.tensor(genotype_df[genotype_df.index.isin(variant_ids)].loc[variant_ids].values,
-                               dtype=torch.float32).to(device)
-    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in counts_df.columns])
+    if variant_df is not None:
+        gi = gt.GenotypeIndexer(genotype_df, variant_df)
+    else:
+        assert isinstance(genotype_df, gt.GenotypeIndexer)
+        gi = genotype_df
+    genotype_ix = np.array([gi.genotype_df.columns.tolist().index(i) for i in counts_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
-    genotypes_t = genotypes_t[:,genotype_ix_t]
-    impute_mean(genotypes_t)
-
-    counts_t = torch.tensor(counts_df.loc[gene_ids].values, dtype=torch.float32).to(device)
 
     if covariates_df is not None:
         covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
     else:
         covariates_t = None
 
-    afc = []
-    afc_se = []
-    for k in range(len(variant_ids)):
-        if (k+1) % 10 == 0 or k+1 == len(variant_ids):
-            print(f"\rCalculating aFC for variant-gene pair {k+1}/{len(variant_ids)}", end='', flush=True)
-        _, b, b_se = mixqtl.trc(genotypes_t[[k]], counts_t[k], covariates_t=covariates_t,
-                                select_covariates=select_covariates, count_threshold=count_threshold,
-                                imputation=imputation, return_af=False)
-        afc.append(float(b.cpu()))
-        afc_se.append(float(b_se.cpu()))
-    print()
-    afc = np.array(afc) * np.log2(np.e)
-    afc_se = np.array(afc_se) * np.log2(np.e)
-    afc_df = pd.DataFrame({'gene_id':gene_ids, 'variant_id':variant_ids,
-                           'afc':afc, 'afc_se':afc_se})
+    afc_df = []
+    n = len(assoc_df['gene_id'].unique())
+    for k, (gene_id, gdf) in enumerate(assoc_df.groupby('gene_id', sort=False), 1):
+        if verbose and k % 10 == 0 or k == n:
+            print(f"\rCalculating aFC for gene {k}/{n}", end='' if k != n else None, flush=True)
+
+        counts_t = torch.tensor(counts_df.loc[gene_id].values,
+                                dtype=torch.float32).to(device)
+        genotypes_t = torch.tensor(gi.get_genotypes(gdf['variant_id'].tolist()), dtype=torch.float32).to(device)
+        genotypes_t = genotypes_t[:,genotype_ix_t]
+        impute_mean(genotypes_t)
+        b, b_se = mixqtl.trc(genotypes_t, counts_t, covariates_t=covariates_t,
+                             select_covariates=select_covariates, count_threshold=count_threshold,
+                             imputation=imputation, mode='multi', return_af=False)
+        gdf['afc'] = b.cpu().numpy() * np.log2(np.e)
+        gdf['afc_se'] = b_se.cpu().numpy() * np.log2(np.e)
+        afc_df.append(gdf)
+    afc_df = pd.concat(afc_df)
+
     return afc_df
 
 

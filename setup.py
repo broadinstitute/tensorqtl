@@ -14,7 +14,7 @@ setup(
     name = 'tensorqtl',
     version = __version__,
     packages = find_packages(),
-    description = 'GPU-based QTL mapper',
+    description = 'GPU-accelerated QTL mapper',
     author = 'Francois Aguet (Broad Institute)',
     author_email = 'francois@broadinstitute.org',
     long_description = _LONG_DESCRIPTION,
@@ -25,12 +25,13 @@ setup(
         ]
     },
     install_requires = [
-    'numpy',
-    'pandas',
-    'pyarrow',
-    'scipy',
-    'pandas-plink',
-    'torch',
+        'numpy',
+        'pandas',
+        'pyarrow',
+        'scipy',
+        'pandas-plink',
+        'torch',
+        'qtl',
     ],
     classifiers = [
         "Programming Language :: Python :: 3",
