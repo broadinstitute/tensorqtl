@@ -245,7 +245,8 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         chr_res['pval_i'] =       np.empty([n, ni], dtype=np.float64)
         chr_res['b_i'] =          np.empty([n, ni], dtype=np.float32)
         chr_res['b_se_i'] =       np.empty([n, ni], dtype=np.float32)
-        chr_res['f'] =          np.empty(n, dtype=np.float32)
+        chr_res['f'] =            np.empty(n, dtype=np.float32)
+        chr_res['r2'] =           np.empty(n, dtype=np.float32)
 
         start = 0
 
@@ -260,7 +261,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
             tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
 
             # filter variants here
-            genotypes_t, mask_t = filter_term_samples(genotypes_t, filter_term_mask_t)
+            genotypes_t, mask_t = filter_term_samples(genotypes_t, filter_term_mask_t, device=device)
 
             if genotypes_t.shape[0] > 0:
                 mask = mask_t.cpu().numpy()
@@ -271,7 +272,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                                                         g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
                                                         residualizer=residualizer, variant_ids=variant_ids)
 
-                    f, tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+                    f, r2, tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     tss_distance = tss_distance[mask]
                     n = len(variant_ids)
 
@@ -288,10 +289,12 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                 chr_res['af'][start:start+n] = af
                 chr_res['ma_samples'][start:start+n] = ma_samples
                 chr_res['ma_count'][start:start+n] = ma_count
-                chr_res['pval_i'][start:start+n]  = tstat[:,:]
-                chr_res['b_i'][start:start+n]     = b[:,:]
-                chr_res['b_se_i'][start:start+n]  = b_se[:,:]
-                chr_res['f'][start:start+n]  = f
+                chr_res['pval_i'][start:start+n]  = tstat[...,0]
+                chr_res['b_i'][start:start+n]     = b[...,0]
+                chr_res['b_se_i'][start:start+n]  = b_se[...,0]
+                chr_res['f'][start:start+n]  = f[...,0]
+                chr_res['r2'][start:start+n]  = r2[...,0]
+
             start += n
         
         logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')

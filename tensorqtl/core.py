@@ -111,9 +111,7 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
     genotypes_t = genotypes_t[mask_t]
     return genotypes_t, mask_t
 
-def filter_term_samples(genotypes_t, term_mask_t, num_samples_per_gt=3):
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def filter_term_samples(genotypes_t, term_mask_t, num_samples_per_gt=3, device='cpu'):
 
     # filter monomorphic sites (to avoid colinearity)
     mask_t = ~((genotypes_t==0).all(1) | (genotypes_t==1).all(1) | (genotypes_t==2).all(1))
@@ -219,7 +217,8 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
 
     nterms = X.shape[2]
 
-    Y = phenotypes_t 
+    Y = phenotypes_t if phenotypes_t.dim() == 2 else phenotypes_t.unsqueeze(0)
+    nps = Y.shape[0]
     
     # center and residualize phenotypes matrix
     if center:
@@ -227,7 +226,8 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     if residualizer is not None:
         Y = residualizer.transform(Y, center=False)
 
-    Y = Y.unsqueeze(0).expand([ng, *Y.shape])  # ng x np x ns
+    #Y = Y.unsqueeze(0).expand([ng, *Y.shape])  # ng x np x ns
+    Y = Y.expand([ng, *Y.shape])  # ng x np x ns
     Y = torch.transpose(Y, 1, 2)
 
     dfe = ns - nterms
@@ -248,29 +248,30 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
             e.args = (e.args[0] + f'\n    Likely problematic variant: {variant_ids[i]} ',) + e.args[1:]
         raise
 
-    b_t = torch.matmul(XtXinv, XtY).squeeze(-1)
+    b_t = torch.matmul(XtXinv, XtY)
 
     hat_matrix_t = torch.matmul(torch.matmul(X, XtXinv), torch.transpose(X, 1, 2))
     predicted_t = torch.matmul(hat_matrix_t, Y)
     
     resids = Y - predicted_t
-    sse = torch.matmul(torch.transpose(resids, 1, 2), resids)
+    sse = torch.pow(resids, 2).sum(1)
     mse = sse / dfe
 
-    # todo: residuals from reduced model
-
     resids = predicted_t - Y.mean(1, keepdims=True)
-    ssm = torch.matmul(torch.transpose(resids, 1, 2), resids)
+    ssm = torch.pow(resids, 2).sum(1)
     msm = ssm / dfm
 
-    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)] * mse.squeeze(-1))
+    sst = sse + ssm
+
+    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)].unsqueeze(-1).repeat([1, 1, nps]) * mse.unsqueeze(1).repeat([1,nterms,1]))
     tstat_t = b_t/b_se_t
 
-    f_t = (msm/mse).flatten()
+    f_t = (msm/mse)
+    r2_t = (ssm/sst)
 
     af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t) # allele freqs are wrong because we have same inidviduals for interaction studies
     
-    return f_t, tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
+    return f_t, r2_t, tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
 
 def linreg(X_t, y_t, dtype=torch.float64):
     """
