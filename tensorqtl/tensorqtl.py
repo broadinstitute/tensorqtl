@@ -99,7 +99,7 @@ def main():
         previous_group = ''
         parsed_groups = 0
         for i in phenotype_df.index:
-            if group_dict[i]!=previous_group:
+            if group_dict[i] != previous_group:
                 parsed_groups += 1
                 previous_group = group_dict[i]
         if not parsed_groups == len(group_s.unique()):
@@ -130,6 +130,13 @@ def main():
                                 interaction_df=interaction_df, maf_threshold_interaction=args.maf_threshold_interaction,
                                 group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
                                 output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
+                # compute significant pairs
+                if args.cis_output is not None:
+                    cis_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
+                    nominal_prefix = os.path.join(args.output_dir, f'{args.prefix}.cis_qtl_pairs')
+                    signif_df = get_significant_pairs(cis_df, nominal_prefix, group_s=group_s, fdr=args.fdr)
+                    signif_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl.signif_pairs.parquet'))
+
             else:  # load genotypes for each chromosome separately
                 top_df = []
                 for chrom in pr.chrs:
