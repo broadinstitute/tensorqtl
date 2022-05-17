@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
     parser.add_argument('--batch_size', type=int, default=20000, help='Batch size. Reduce this if encountering OOM errors.')
     parser.add_argument('--load_split', action='store_true', help='Load genotypes into memory separately for each chromosome.')
+    parser.add_argument('--warn_monomorphic', action='store_true', help='Warn if monomorphic variants are found.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
     parser.add_argument('--qvalue_lambda', default=None, type=np.float64, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('--seed', default=None, type=int, help='Seed for permutations.')
@@ -116,7 +117,8 @@ def main():
         if args.mode == 'cis':
             res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
                                  group_s=group_s, nperm=args.permutations, window=args.window,
-                                 maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
+                                 maf_threshold=maf_threshold, warn_monomorphic=args.warn_monomorphic,
+                                 logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
             if has_rpy2:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda, logger=logger)
