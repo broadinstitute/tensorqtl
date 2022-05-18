@@ -3,7 +3,7 @@
 tensorQTL is a GPU-enabled QTL mapper, achieving ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
 
 
-Note: this is a fork of the Broad tensorQTL repo with allowing for formulaic definition of QTL regression for arbitrary interaction terms. Variant filtering is a work in progress -- in this current implementation which focused on categorical interaction terms (i.e., cell type) we require 3 samples per category and at at least 3 individual for each genotype (0, 1, 2). The filtering function can be found in the `filter_term_samples` function in core.py](tensorqlt/core.py) (line ~114).
+Note: this is a fork of the Broad tensorQTL repo with allowing for formulaic definition of QTL regression for arbitrary interaction terms. Variant filtering is a work in progress -- in this current implementation which focused on categorical interaction terms (i.e., cell type) we require 3 samples per category and at at least 3 individual for each genotype (0, 1, 2). The filtering function can be found in the `filter_term_samples` function in [core.py](tensorqlt/core.py) (line ~114).
 
 
 If you use tensorQTL in your research, please cite the following paper:
