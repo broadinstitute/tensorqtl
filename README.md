@@ -130,7 +130,8 @@ python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} \
 ```
 
 #### *cis*-QTL mapping: interactions
-Instead of mapping the standard linear model (p ~ g), this mode includes an interaction term (p ~ g + i + gi) and returns full summary statistics for the model. The interaction term is a tab-delimited text file or `pd.Series` mapping sample ID to interaction value. With the `run_eigenmt=True` option, [eigenMT](https://www.cell.com/ajhg/fulltext/S0002-9297(15)00492-9)-adjusted p-values are computed.
+Instead of mapping the standard linear model (p ~ g), this mode includes an interaction terms. The formula can be specified as a 'R-style' using the patsy Python interface ([patsy](https://patsy.readthedocs.io/en/latest/) for more information): `p ~ g + term - 1`. In this case -1, removes the intercept.
+
 In Python:
 ```
 res_full = cis.map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
@@ -139,8 +140,6 @@ res_full = cis.map_nominal_interactions(genotype_df, variant_df, phenotype_df, p
                                 write_output=False, prefix='qtl', output_dir='.')
 
 ```
-
-The formula can be specified as an 'R-style' formula using the patsy Python interface (patsy for more information): `p ~ g + term - 1`. In this case -1, removes the intercept.
 
 The input options `write_output`control whether full summary statistics, respectively, are written to file (starting with `prefix`)
 
