@@ -180,7 +180,7 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
 
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t, 
-                                  g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
+                                  g_interaction_terms_t, terms_to_residualize_t,
                                   residualizer=None, center=False, variant_ids=None):
     """
     Solve y ~ g + i + g:i, where i is an interaction vector or matrix
@@ -205,7 +205,8 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     X = torch.clone(design_t).unsqueeze(0).repeat([ng, 1, 1])
 
     # apply genotypes to terms w/ genotype component
-    X[..., g_idx_t] = genotypes_t
+    # if g_idx_t > 0:
+    #     X[..., g_idx_t] = genotypes_t
     X[..., g_interaction_terms_t] *= genotypes_t.unsqueeze(-1)
    
     # center and residualize non-categorical variables and those with genotype component
@@ -253,25 +254,25 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     hat_matrix_t = torch.matmul(torch.matmul(X, XtXinv), torch.transpose(X, 1, 2))
     predicted_t = torch.matmul(hat_matrix_t, Y)
     
-    resids = Y - predicted_t
-    sse = torch.pow(resids, 2).sum(1)
-    mse = sse / dfe
+    resids_t = Y - predicted_t
+    sse_t = torch.pow(resids_t, 2).sum(1)
+    mse_t = sse_t / dfe
 
-    resids = predicted_t - Y.mean(1, keepdims=True)
-    ssm = torch.pow(resids, 2).sum(1)
-    msm = ssm / dfm
+    resids_t = predicted_t - Y.mean(1, keepdims=True)
+    ssr_t = torch.pow(resids_t, 2).sum(1)
+    msr_t = ssr_t / dfm
 
-    sst = sse + ssm
+    sst_t = sse_t + ssr_t
 
-    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)].unsqueeze(-1).repeat([1, 1, nps]) * mse.unsqueeze(1).repeat([1,nterms,1]))
+    b_se_t = torch.sqrt(XtXinv[:, torch.eye(nterms, dtype=torch.bool)].unsqueeze(-1).repeat([1, 1, nps]) * mse_t.unsqueeze(1).repeat([1,nterms,1]))
     tstat_t = b_t/b_se_t
 
-    f_t = (msm/mse)
-    r2_t = (ssm/sst)
+    f_t = (msr_t/mse_t)
+    r2_t = (ssr_t/sst_t)
 
     af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t) # allele freqs are wrong because we have same inidviduals for interaction studies
     
-    return f_t, r2_t, tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
+    return sse_t, f_t, r2_t, tstat_t, b_t, b_se_t, af_t, ma_samples_t, ma_count_t
 
 def linreg(X_t, y_t, dtype=torch.float64):
     """

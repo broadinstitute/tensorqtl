@@ -1,3 +1,4 @@
+from bdb import Breakpoint
 from types import DynamicClassAttribute
 import torch
 import numpy as np
@@ -139,7 +140,8 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
 
 def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_pos_df, 
-                            sample_info_df, formula='p ~ g - 1', covariates_df=None, window=1_000_000,
+                            sample_info_df, formula='p ~ g - 1', covariates_df=None, 
+                            window=1_000_000, batch_size=500, write_output=False,
                             prefix='qtl', output_dir='.', logger=None, verbose=True):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,7 +149,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     if logger is None:
         logger = SimpleLogger()
 
-    logger.write('cis-QTL mapping: nominal associations for all variant-phenotype pairs')
+    logger.write('cis-QTL interaction mapping: nominal associations for all variant-phenotype pairs')
     logger.write(f'  * {phenotype_df.shape[1]} samples')
     logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     
@@ -171,7 +173,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
 
     ni = len(design_info.column_names)
 
-    g_idx = -1
+    # g_idx = -1
     g_interaction_terms = np.zeros(ni, dtype=bool)
     continuous_terms = np.zeros(ni, dtype=bool)
     categorical_terms = np.zeros(ni, dtype=bool)
@@ -180,9 +182,9 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     for term_name, span in six.iteritems(design_info.term_name_slices):
         if term_name == 'Intercept':
             continue
-        elif term_name == 'g':
-            g_idx = span.start
-        elif 'g:' in term_name:
+        # elif term_name == 'g':
+        #    g_idx = span.start
+        elif 'g' in term_name:
             g_interaction_terms[span.start:span.stop] = True
         elif 'C(' not in term_name:
             continuous_terms[span.start:span.stop] = True
@@ -197,12 +199,12 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
     # print(f'Categorical terms columns: {categorical_terms}')
 
     terms_to_residualize = g_interaction_terms | continuous_terms
-    terms_to_residualize[g_idx] = True
+    # terms_to_residualize[g_idx] = True
 
     terms_to_residualize_t = torch.tensor(np.where(terms_to_residualize)[0]).to(device)
     categorial_terms_t = torch.tensor(categorical_terms, dtype=torch.bool).to(device)
     g_interaction_terms_t = torch.tensor(g_interaction_terms, dtype=torch.bool).to(device)
-    g_idx_t = torch.tensor(g_idx)
+    # g_idx_t = torch.tensor(g_idx)
 
     # design matrix template
     design_t = torch.tensor(np.asarray(design_mat), dtype=torch.float32).to(device)
@@ -225,6 +227,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
 
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, window=window)
     k = 0
+    res_dfs = []
 
     logger.write('  * Computing associations')
     for chrom in igc.chrs:
@@ -247,62 +250,100 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
         chr_res['b_se_i'] =       np.empty([n, ni], dtype=np.float32)
         chr_res['f'] =            np.empty(n, dtype=np.float32)
         chr_res['r2'] =           np.empty(n, dtype=np.float32)
+        chr_res['sse'] =          np.empty(n, dtype=np.float32)
+        chr_res['dfe'] =          np.empty(n, dtype=np.float32)
+        chr_res['m_eff'] =        np.empty(n, dtype=np.int32)
 
-        start = 0
+        res_start = 0 # start of phenotype
+        res_chunk_start = 0
+        res_chunk_end = 0
 
+        k = 0
         for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom, verbose=verbose), k+1):
-            # copy genotypes to GPU
+
+            res_start = res_chunk_start
+
+            # copy phenotype to GPU
             phenotype_t = torch.tensor(phenotype, dtype=torch.float32).to(device)
-            genotypes_t = torch.tensor(genotypes, dtype=torch.float32).to(device)
-            genotypes_t = genotypes_t[:,genotype_ix_t]
-            impute_mean(genotypes_t)
 
             variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
             tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
 
-            # filter variants here
-            genotypes_t, mask_t = filter_term_samples(genotypes_t, filter_term_mask_t, device=device)
+            # Chunk genotypes
+            chunked_genotypes = [genotypes[i:i+batch_size,:] for i in range(0, len(genotypes), batch_size)]
 
-            if genotypes_t.shape[0] > 0:
-                mask = mask_t.cpu().numpy()
-                variant_ids = variant_ids[mask]
+            chunk_start = 0
+            for chunk in chunked_genotypes:
+                
+                chunk_size = len(chunk)
 
-                try:
-                    res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), design_t,
-                                                        g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
-                                                        residualizer=residualizer, variant_ids=variant_ids)
+                # copy genotypes to GPU
+                genotypes_t = torch.tensor(chunk, dtype=torch.float32).to(device)
+                genotypes_t = genotypes_t[:,genotype_ix_t]
+                impute_mean(genotypes_t)
 
-                    f, r2, tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
-                    tss_distance = tss_distance[mask]
-                    n = len(variant_ids)
+                chunk_variant_ids = variant_ids[chunk_start:chunk_start+chunk_size]
+                chunk_tss_distance = tss_distance[chunk_start:chunk_start+chunk_size]
 
-                except Exception as e:
-                    print(e)
-                    n = 0
-            else:
-                n = 0
-
-            if n > 0:
-                chr_res['phenotype_id'].extend([phenotype_id]*n)
-                chr_res['variant_id'].extend(variant_ids)
-                chr_res['tss_distance'][start:start+n] = tss_distance
-                chr_res['af'][start:start+n] = af
-                chr_res['ma_samples'][start:start+n] = ma_samples
-                chr_res['ma_count'][start:start+n] = ma_count
-                chr_res['pval_i'][start:start+n]  = tstat[...,0]
-                chr_res['b_i'][start:start+n]     = b[...,0]
-                chr_res['b_se_i'][start:start+n]  = b_se[...,0]
-                chr_res['f'][start:start+n]  = f[...,0]
-                chr_res['r2'][start:start+n]  = r2[...,0]
-
-            start += n
+                assert len(chunk_variant_ids) == len(chunk)
         
+                # filter variants here
+                genotypes_t, mask_t = filter_term_samples(genotypes_t, filter_term_mask_t, device=device)
+
+                if genotypes_t.shape[0] > 0:
+
+                    mask = mask_t.cpu().numpy().astype(bool)
+                    chunk_variant_ids = chunk_variant_ids[mask]
+                    chunk_tss_distance = chunk_tss_distance[mask]
+
+                    try:
+                        # res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), design_t,
+                        #                                 g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
+                        #                                 residualizer=residualizer, variant_ids=variant_ids)
+                        res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), design_t,
+                                                        g_interaction_terms_t, terms_to_residualize_t,
+                                                        residualizer=residualizer, variant_ids=variant_ids)
+                        sse, f, r2, tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
+
+                        res_chunk_end = res_chunk_start + len(chunk_variant_ids)
+
+                        chr_res['phenotype_id'].extend([phenotype_id]*len(chunk_variant_ids))
+                        chr_res['variant_id'].extend(chunk_variant_ids)
+                        chr_res['tss_distance'][res_chunk_start:res_chunk_end] = chunk_tss_distance
+                        chr_res['af'][res_chunk_start:res_chunk_end] = af
+                        chr_res['ma_samples'][res_chunk_start:res_chunk_end] = ma_samples
+                        chr_res['ma_count'][res_chunk_start:res_chunk_end] = ma_count
+                        chr_res['pval_i'][res_chunk_start:res_chunk_end]  = tstat[...,0]
+                        chr_res['b_i'][res_chunk_start:res_chunk_end]     = b[...,0]
+                        chr_res['b_se_i'][res_chunk_start:res_chunk_end]  = b_se[...,0]
+                        chr_res['f'][res_chunk_start:res_chunk_end]  = f[...,0]
+                        chr_res['r2'][res_chunk_start:res_chunk_end]  = r2[...,0]
+                        chr_res['sse'][res_chunk_start:res_chunk_end]  = sse[...,0]
+                        chr_res['dfe'][res_chunk_start:res_chunk_end] = dfe
+                        
+                        res_chunk_start = res_chunk_end
+                    
+                    except Exception as e:
+                        print(e)
+
+                chunk_start = chunk_start + chunk_size
+            
+            # compte m_eff
+            if res_chunk_end-res_start>0:
+
+                genotypes_t = torch.tensor(genotypes, dtype=torch.float32).to(device)
+                genotypes_t = genotypes_t[:,genotype_ix_t]
+                impute_mean(genotypes_t)
+
+                genotypes_t, mask_t = filter_term_samples(genotypes_t, filter_term_mask_t, device=device)
+
+                chr_res['m_eff'][res_start:res_chunk_end] = eigenmt.compute_tests(genotypes_t, var_thresh=0.99, variant_window=200)
+
         logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
 
         # convert to dataframe, compute p-values and write current chromosome
-        if start < len(chr_res['af']):
-            for x in chr_res:
-                chr_res[x] = chr_res[x][:start]
+        for x in chr_res:
+            chr_res[x] = chr_res[x][:res_chunk_end]
         
         # split columns
         cols = ['pval_i', 'b_i', 'b_se_i']
@@ -330,11 +371,18 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
 
         # substitute column headers
         chr_res_df.rename(columns=var_dict, inplace=True)
-
-        print('    * writing output')
-        chr_res_df.to_parquet(os.path.join(output_dir, f'{prefix}.cis_qtl_pairs.{chrom}.parquet'))
-
+        
+        if write_output:
+            print('    * writing output')
+            chr_res_df.to_parquet(os.path.join(output_dir, f'{prefix}.cis_qtl_pairs.{chrom}.parquet'))
+        else:
+            res_dfs.append(chr_res_df)
+     
     logger.write('done.')
+
+    if not write_output:
+        return pd.concat(res_dfs, axis=0)
+
 
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix='qtl',
@@ -377,6 +425,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix=
     start_time = time.time()
     k = 0
     logger.write('  * Computing associations')
+
     for chrom in igc.chrs:
         logger.write(f'    Mapping chromosome {chrom}')
         # allocate arrays
@@ -452,7 +501,6 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix=
         chr_res_df.to_parquet(os.path.join(output_dir, f'{prefix}.cis_qtl_pairs.{chrom}.parquet'))
         
     logger.write('done.')
-
 
 def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=10000):
     """Return nominal p-value, allele frequencies, etc. as pd.Series"""

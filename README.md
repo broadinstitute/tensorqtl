@@ -2,6 +2,10 @@
 
 tensorQTL is a GPU-enabled QTL mapper, achieving ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
 
+
+Note: this is a fork of the Broad tensorQTL repo with allowing for formulaic definition of QTL regression for arbitrary interaction terms. Variant filtering is a work in progress -- in this current implementation which focused on categorical interaction terms (i.e., cell type) we require 3 samples per category and at at least 3 individual for each genotype (0, 1, 2). The filtering function can be found in the `filter_term_samples` function in core.py](tensorqlt/core.py) (line ~114).
+
+
 If you use tensorQTL in your research, please cite the following paper:
 [Taylor-Weiner, Aguet, et al., *Genome Biol.* 20:228, 2019](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1836-7).
 
@@ -14,7 +18,7 @@ pip3 install tensorqtl
 ```
 or directly from this repository:
 ```
-$ git clone git@github.com:broadinstitute/tensorqtl.git
+$ git clone git@github.com:jvierstra/tensorqtl.git
 $ cd tensorqtl
 # set up virtual environment and install
 $ virtualenv venv
@@ -129,24 +133,20 @@ python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} \
 Instead of mapping the standard linear model (p ~ g), this mode includes an interaction term (p ~ g + i + gi) and returns full summary statistics for the model. The interaction term is a tab-delimited text file or `pd.Series` mapping sample ID to interaction value. With the `run_eigenmt=True` option, [eigenMT](https://www.cell.com/ajhg/fulltext/S0002-9297(15)00492-9)-adjusted p-values are computed.
 In Python:
 ```
-cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
-                covariates_df=covariates_df,
-                interaction_s=interaction_s, maf_threshold_interaction=0.05,
-                run_eigenmt=True, output_dir='.', write_top=True, write_stats=True)
-```
-The input options `write_top` and `write_stats` control whether the top association per phenotype and full summary statistics, respectively, are written to file.
+res_full = cis.map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
+                                phenotype_sample_df, formula=formula,
+                                covariates_df=covariates_df, window=window, 
+                                write_output=False, prefix='qtl', output_dir='.')
 
-Shell command:
 ```
-python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} \
-    --covariates ${covariates_file} \
-    --interaction ${interactions_file} \
-    --best_only \
-    --mode cis_nominal
-```
-The option `--best_only` disables output of full summary statistics.
 
-Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) files for each chromosome, in `${output_dir}/${prefix}.cis_qtl_pairs.${chr}.parquet`, and the top association for each phenotype is saved to `${output_dir}/${prefix}.cis_qtl_top_assoc.txt.gz`. In these files, the columns `b_g`, `b_g_se`, `pval_g` are the effect size, standard error, and p-value of *g* in the model, with matching columns for *i* and *gi*. In the `*.cis_qtl_top_assoc.txt.gz` file, `tests_emt` is the effective number of independent variants in the cis-window estimated with eigenMT, i.e., based on the eigenvalue decomposition of the regularized genotype correlation matrix ([Davis et al., AJHG, 2016](https://www.cell.com/ajhg/fulltext/S0002-9297(15)00492-9)). `pval_emt = pval_gi * tests_emt`, and `pval_adj_bh` are the Benjamini-Hochberg adjusted p-values corresponding to `pval_emt`. 
+The formula can be specified as an 'R-style' formula using the patsy Python interface (patsy for more information): `p ~ g + term - 1`. In this case -1, removes the intercept.
+
+The input options `write_output`control whether full summary statistics, respectively, are written to file (starting with `prefix`)
+
+Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) files for each chromosome, in `${output_dir}/${prefix}.cis_qtl_pairs.${chr}.parquet`, and the top association for each phenotype is saved to `${output_dir}/${prefix}.cis_qtl_top_assoc.txt.gz`. In these files, the columns `b_g`, `b_g_se`, `pval_g` are the effect size, standard error, and p-value of *g* in the model, with matching columns for *i* and *gi*.
+
+See [this noteboook](example/InteractionQTL.ipynb) for a complete example of how this works.
 
 #### *trans*-QTL mapping
 This mode computes nominal associations between all phenotypes and genotypes. tensorQTL generates sparse output by default (associations with p-value < 1e-5). *cis*-associations are filtered out. The output is in parquet format, with four columns: phenotype_id, variant_id, pval, maf.
