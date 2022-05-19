@@ -2,9 +2,9 @@
 
 tensorQTL is a GPU-enabled QTL mapper, achieving ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
 
+Note: this is a fork of the Broad tensorQTL repo with allowing for formulaic definition of QTL regression for arbitrary interaction terms. Variant filtering is a work in progress -- in this current implementation which focused on categorical interaction terms (i.e., cell type) we require at least 3 individuals for each genotype (0, 1, 2) for each categorical term. The filtering function can be found in the `filter_term_samples` function in [core.py](tensorqtl/core.py) (line ~114). This can be customized for your particular dataset/use case. 
 
-Note: this is a fork of the Broad tensorQTL repo with allowing for formulaic definition of QTL regression for arbitrary interaction terms. Variant filtering is a work in progress -- in this current implementation which focused on categorical interaction terms (i.e., cell type) we require 3 samples per category and at at least 3 individual for each genotype (0, 1, 2). The filtering function can be found in the `filter_term_samples` function in [core.py](tensorqtl/core.py) (line ~114).
-
+To see how the interaction mode works please see [this noteboook](example/InteractionQTL.ipynb). Currently, there is no command-line implementation for interaction terms.
 
 If you use tensorQTL in your research, please cite the following paper:
 [Taylor-Weiner, Aguet, et al., *Genome Biol.* 20:228, 2019](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1836-7).
@@ -12,9 +12,13 @@ If you use tensorQTL in your research, please cite the following paper:
 Empirical beta-approximated p-values are computed as described in [FastQTL](http://fastqtl.sourceforge.net/) ([Ongen et al., 2016](https://academic.oup.com/bioinformatics/article/32/10/1479/1742545)).
 
 ### Install
+
+$ git clone git@github.com:jvierstra/tensorqtl.git
+
 You can install tensorQTL using pip:
 ```
-pip3 install tensorqtl
+cd tensorflow
+pip install .
 ```
 or directly from this repository:
 ```
@@ -130,20 +134,29 @@ python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} \
 ```
 
 #### *cis*-QTL mapping: interactions
-Instead of mapping the standard linear model (p ~ g), this mode includes an interaction terms. The formula can be specified as a 'R-style' using the patsy Python interface ([patsy](https://patsy.readthedocs.io/en/latest/) for more information): `p ~ g + term - 1`. In this case -1, removes the intercept.
+Instead of mapping the standard linear model (p ~ g), this mode includes an interaction terms The formula can be specified as a 'R-style' using the patsy Python interface (see [patsy](https://patsy.readthedocs.io/en/latest/) for more information): `p ~ g + term - 1`. In this case -1, removes the intercept.
 
 In Python:
 ```
 res_full = cis.map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
                                 phenotype_sample_df, formula=formula,
-                                covariates_df=covariates_df, window=window, 
-                                write_output=False, prefix='qtl', output_dir='.')
+                                covariates_df=covariates_df, window=window, batch_size=1000,
+                                write_output=False, prefix='qtl', output_dir='.', center=False, debug_n=-1)
 
 ```
-
 The input options `write_output`control whether full summary statistics, respectively, are written to file (starting with `prefix`)
 
-Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) files for each chromosome, in `${output_dir}/${prefix}.cis_qtl_pairs.${chr}.parquet`, and the top association for each phenotype is saved to `${output_dir}/${prefix}.cis_qtl_top_assoc.txt.gz`. In these files, the columns `b_g`, `b_g_se`, `pval_g` are the effect size, standard error, and p-value of *g* in the model, with matching columns for *i* and *gi*.
+The argument `center` specifies wether coefficients are centered (only applied when a covariates matrix is provided).
+
+`batch_size` can be changed if your get a 'CUDA out of memory error' (In this case, reduce the batch size).
+
+The formula must specify `p` and `g` for phenotype and genotypes. These cannot occur as columns in the `phenotype_sample_df` dataframe.
+
+Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) files for each chromosome, in `${output_dir}/${prefix}.cis_qtl_pairs.${chr}.parquet`. In this files, the columns `b_g`, `b_g_se`, `pval_g` are the effect size, standard error, and p-value of *g* in the model, with matching columns for *i* and *gi*.
+
+The number of effective SNPs (m_eff) is computed for each phenotype using the eigenMT approach.
+
+SSE (sum of squared error) and model degree of freeedom is returned for each variant-phenotype test in to facilitate comparing nested models.
 
 See [this noteboook](example/InteractionQTL.ipynb) for a complete example of how this works.
 
