@@ -150,6 +150,8 @@ The argument `center` specifies wether coefficients are centered (only applied w
 
 `batch_size` can be changed if your get a 'CUDA out of memory error' (In this case, reduce the batch size).
 
+`debug_n` can be used to test the first `n` phenotypes (vs. all) for debugging purposes.
+
 The formula must specify `p` and `g` for phenotype and genotypes. These cannot occur as columns in the `phenotype_sample_df` dataframe.
 
 Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) files for each chromosome, in `${output_dir}/${prefix}.cis_qtl_pairs.${chr}.parquet`. In this files, the columns `b_g`, `b_g_se`, `pval_g` are the effect size, standard error, and p-value of *g* in the model, with matching columns for *i* and *gi*.
