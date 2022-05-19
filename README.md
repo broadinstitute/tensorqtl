@@ -156,9 +156,9 @@ Full summary statistics are saved as [parquet](https://pandas.pydata.org/pandas-
 
 The number of effective SNPs (m_eff) is computed for each phenotype using the eigenMT approach.
 
-SSE (sum of squared error) and model degree of freeedom is returned for each variant-phenotype test in to facilitate comparing nested models.
+SSE (sum of squared error) and model degree of freeedom is returned for each variant-phenotype test in order to facilitate comparing nested models.
 
-See [this noteboook](example/InteractionQTL.ipynb) for a complete example of how this works.
+See [this noteboook](example/InteractionQTL.ipynb) for a complete example of detecting QTLs with interaction terms.
 
 #### *trans*-QTL mapping
 This mode computes nominal associations between all phenotypes and genotypes. tensorQTL generates sparse output by default (associations with p-value < 1e-5). *cis*-associations are filtered out. The output is in parquet format, with four columns: phenotype_id, variant_id, pval, maf.
