@@ -141,8 +141,8 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
 def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_pos_df, 
                             sample_info_df, formula='p ~ g - 1', covariates_df=None, 
-                            window=1_000_000, batch_size=500, write_output=False,
-                            prefix='qtl', output_dir='.', logger=None, verbose=True):
+                            center=False, window=1_000_000, batch_size=500, write_output=False,
+                            prefix='qtl', output_dir='.', logger=None, verbose=True, debug_n=-1):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -173,38 +173,22 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
 
     ni = len(design_info.column_names)
 
-    # g_idx = -1
     g_interaction_terms = np.zeros(ni, dtype=bool)
-    continuous_terms = np.zeros(ni, dtype=bool)
     categorical_terms = np.zeros(ni, dtype=bool)
 
     # todo: clean this code up
     for term_name, span in six.iteritems(design_info.term_name_slices):
-        if term_name == 'Intercept':
-            continue
-        # elif term_name == 'g':
-        #    g_idx = span.start
-        elif 'g' in term_name:
+        if (term_name == 'g') or ('g:' in term_name):
             g_interaction_terms[span.start:span.stop] = True
-        elif 'C(' not in term_name:
-            continuous_terms[span.start:span.stop] = True
-        
+ 
         if (':' not in term_name) and ('C(' in term_name):
             categorical_terms[span.start:span.stop] = True
             
-    # print(f'Intercept column: {intercept_idx}')
-    # print(f'Genotype column: {g_idx}')
     # print(f'Genotype interaction columns: {g_interaction_terms}')
-    # print(f'Continous interaction columns: {continuous_terms}')
     # print(f'Categorical terms columns: {categorical_terms}')
 
-    terms_to_residualize = g_interaction_terms | continuous_terms
-    # terms_to_residualize[g_idx] = True
-
-    terms_to_residualize_t = torch.tensor(np.where(terms_to_residualize)[0]).to(device)
     categorial_terms_t = torch.tensor(categorical_terms, dtype=torch.bool).to(device)
     g_interaction_terms_t = torch.tensor(g_interaction_terms, dtype=torch.bool).to(device)
-    # g_idx_t = torch.tensor(g_idx)
 
     # design matrix template
     design_t = torch.tensor(np.asarray(design_mat), dtype=torch.float32).to(device)
@@ -301,7 +285,7 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                         #                                 g_idx_t, g_interaction_terms_t, terms_to_residualize_t,
                         #                                 residualizer=residualizer, variant_ids=variant_ids)
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), design_t,
-                                                        g_interaction_terms_t, terms_to_residualize_t,
+                                                        g_interaction_terms_t, center=center,
                                                         residualizer=residualizer, variant_ids=variant_ids)
                         sse, f, r2, tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
 
@@ -338,6 +322,9 @@ def map_nominal_interactions(genotype_df, variant_df, phenotype_df, phenotype_po
                 genotypes_t, mask_t = filter_term_samples(genotypes_t, filter_term_mask_t, device=device)
 
                 chr_res['m_eff'][res_start:res_chunk_end] = eigenmt.compute_tests(genotypes_t, var_thresh=0.99, variant_window=200)
+
+            if debug_n>0 and k>debug_n:
+                break
 
         logger.write(f'    time elapsed: {(time.time()-start_time)/60:.2f} min')
 

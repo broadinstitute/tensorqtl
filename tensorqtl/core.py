@@ -180,7 +180,7 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
 
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t, 
-                                  g_interaction_terms_t, terms_to_residualize_t,
+                                  g_interaction_terms_t,
                                   residualizer=None, center=False, variant_ids=None):
     """
     Solve y ~ g + i + g:i, where i is an interaction vector or matrix
@@ -208,24 +208,22 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, design_t,
     # if g_idx_t > 0:
     #     X[..., g_idx_t] = genotypes_t
     X[..., g_interaction_terms_t] *= genotypes_t.unsqueeze(-1)
-   
-    # center and residualize non-categorical variables and those with genotype component
-    for i in terms_to_residualize_t:
-        if center:
-            X[..., i] -= X[..., i].mean(1, keepdim=True)
-        if residualizer is not None:
-            X[..., i] = residualizer.transform(X[..., i], center=False)
 
     nterms = X.shape[2]
+
+    # center and residualize non-categorical variables and those with genotype component
+    # for i in terms_to_residualize_t:
+    for i in range(nterms):
+        if residualizer is not None:
+            X[..., i] = residualizer.transform(X[..., i], center=center)
+
 
     Y = phenotypes_t if phenotypes_t.dim() == 2 else phenotypes_t.unsqueeze(0)
     nps = Y.shape[0]
     
     # center and residualize phenotypes matrix
-    if center:
-        Y -= Y.mean(1, keepdim=True)  # 1 x samples
     if residualizer is not None:
-        Y = residualizer.transform(Y, center=False)
+        Y = residualizer.transform(Y, center=center)
 
     #Y = Y.unsqueeze(0).expand([ng, *Y.shape])  # ng x np x ns
     Y = Y.expand([ng, *Y.shape])  # ng x np x ns
