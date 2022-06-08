@@ -10,9 +10,7 @@ import argparse
 sys.path.insert(1, os.path.dirname(__file__))
 from core import *
 from post import *
-import genotypeio
-import cis
-import trans
+import genotypeio, cis, trans, susie
 
 
 def main():
@@ -20,7 +18,7 @@ def main():
     parser.add_argument('genotype_path', help='Genotypes in PLINK format')
     parser.add_argument('phenotype_bed', help='Phenotypes in BED format')
     parser.add_argument('prefix', help='Prefix for output file names')
-    parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'trans'], help='Mapping mode. Default: cis')
+    parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'cis_susie', 'trans'], help='Mapping mode. Default: cis')
     parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
     parser.add_argument('--permutations', type=int, default=10000, help='Number of permutations. Default: 10000')
     parser.add_argument('--interaction', default=None, type=str, help='Interaction term(s)')
@@ -110,7 +108,7 @@ def main():
     # load genotypes
     pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
-    if args.mode != 'cis_nominal' or not args.load_split:  # load all genotypes into memory
+    if not args.load_split or args.mode != 'cis_nominal':  # load all genotypes into memory
         genotype_df = pd.DataFrame(pr.load_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
 
     if args.mode.startswith('cis'):
@@ -122,7 +120,7 @@ def main():
             logger.write('  * writing output')
             if has_rpy2:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda, logger=logger)
-            out_file = os.path.join(args.output_dir, args.prefix+'.cis_qtl.txt.gz')
+            out_file = os.path.join(args.output_dir, f'{args.prefix}.cis_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', float_format='%.6g')
         elif args.mode == 'cis_nominal':
             if not args.load_split:
@@ -162,8 +160,17 @@ def main():
                                          group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
                                          maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
-            out_file = os.path.join(args.output_dir, args.prefix+'.cis_independent_qtl.txt.gz')
+            out_file = os.path.join(args.output_dir, f'{args.prefix}.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
+
+        elif args.mode == 'cis_susie':
+            signif_df = pd.read_parquet(args.cis_output)
+            ix = phenotype_df.index[phenotype_df.index.isin(signif_df['phenotype_id'].unique())]
+            summary_df = susie.map(genotype_df, variant_df,
+                                   phenotype_df.loc[ix], phenotype_pos_df.loc[ix],
+                                   covariates_df, max_iter=500, summary_only=True)
+            summary_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.SuSiE_summary.parquet'))
+
     elif args.mode == 'trans':
         return_sparse = not args.return_dense
         pval_threshold = args.pval_threshold
@@ -187,9 +194,9 @@ def main():
 
         logger.write('  * writing output')
         if not args.output_text:
-            pairs_df.to_parquet(os.path.join(args.output_dir, args.prefix+'.trans_qtl_pairs.parquet'))
+            pairs_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pairs.parquet'))
         else:
-            out_file = os.path.join(args.output_dir, args.prefix+'.trans_qtl_pairs.txt.gz')
+            out_file = os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pairs.txt.gz')
             pairs_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
 
     logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Finished mapping')

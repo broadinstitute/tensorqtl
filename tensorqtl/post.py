@@ -63,7 +63,8 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
 
 
 def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_df=None,
-                  select_covariates=True, imputation='offset', count_threshold=0, verbose=True):
+                  select_covariates=True, group='gene_id',
+                  imputation='offset', count_threshold=0, verbose=True):
     """
     Calculate allelic fold-change (aFC) for variant-gene pairs
 
@@ -98,22 +99,25 @@ def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_
         covariates_t = None
 
     afc_df = []
-    n = len(assoc_df['gene_id'].unique())
-    for k, (gene_id, gdf) in enumerate(assoc_df.groupby('gene_id', sort=False), 1):
+    n = len(assoc_df[group].unique())
+    for k, (phenotype_id, gdf) in enumerate(assoc_df.groupby(group, sort=False), 1):
         if verbose and k % 10 == 0 or k == n:
-            print(f"\rCalculating aFC for gene {k}/{n}", end='' if k != n else None, flush=True)
+            print(f"\rCalculating aFC for {group.replace('_id','')} {k}/{n}", end='' if k != n else None, flush=True)
 
-        counts_t = torch.tensor(counts_df.loc[gene_id].values,
+        counts_t = torch.tensor(counts_df.loc[phenotype_id].values,
                                 dtype=torch.float32).to(device)
         genotypes_t = torch.tensor(gi.get_genotypes(gdf['variant_id'].tolist()), dtype=torch.float32).to(device)
         genotypes_t = genotypes_t[:,genotype_ix_t]
         impute_mean(genotypes_t)
-        b, b_se = mixqtl.trc(genotypes_t, counts_t, covariates_t=covariates_t,
-                             select_covariates=select_covariates, count_threshold=count_threshold,
-                             imputation=imputation, mode='multi', return_af=False)
-        gdf['afc'] = b.cpu().numpy() * np.log2(np.e)
-        gdf['afc_se'] = b_se.cpu().numpy() * np.log2(np.e)
-        afc_df.append(gdf)
+        try:
+            b, b_se = mixqtl.trc(genotypes_t, counts_t, covariates_t=covariates_t,
+                                 select_covariates=select_covariates, count_threshold=count_threshold,
+                                 imputation=imputation, mode='multi', return_af=False)
+            gdf['afc'] = b.cpu().numpy() * np.log2(np.e)
+            gdf['afc_se'] = b_se.cpu().numpy() * np.log2(np.e)
+            afc_df.append(gdf)
+        except:
+            print(f'WARNING: aFC calculation failed for {phenotype_id}')
     afc_df = pd.concat(afc_df)
 
     return afc_df
@@ -270,6 +274,7 @@ def get_significant_pairs(res_df, nominal_files, group_s=None, fdr=0.05):
     threshold_dict = df['pval_nominal_threshold'].to_dict()
 
     if isinstance(nominal_files, str):
+        # chr -> file
         nominal_files = {os.path.basename(i).split('.')[-2]:i for i in glob.glob(nominal_files+'*.parquet')}
     else:
         assert isinstance(nominal_files, dict)
