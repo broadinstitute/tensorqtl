@@ -118,7 +118,7 @@ def _impute_mean(g, missing=-1, verbose=False):
         print(f'    imputed at least 1 sample in {n}/{g.shape[0]} sites')
 
 
-class Plink1Reader(object):
+class PlinkReader(object):
     def __init__(self, plink_prefix_path, select_samples=None, include_variants=None,
                  exclude_variants=None, exclude_chrs=None, verbose=True, dtype=np.int8):
         """
@@ -324,7 +324,7 @@ def load_genotypes(plink_prefix_path, select_samples=None, dtype=np.int8):
 
     # identify format
     if all([os.path.exists(f"{plink_prefix_path}.{ext}" for ext in ['bed', 'bim', 'fam'])]):
-        pr = Plink1Reader(plink_prefix_path, select_samples=select_samples, dtype=dtype)
+        pr = PlinkReader(plink_prefix_path, select_samples=select_samples, dtype=dtype)
         df = pr.load_genotypes()
     elif all([os.path.exists(f"{plink_prefix_path}.{ext}" for ext in ['pgen', 'psam', 'pvar'])]):
         if pgen is None:

@@ -5,6 +5,11 @@ from rpy2.robjects.packages import importr
 from collections import Iterable
 from contextlib import contextmanager
 
+# silence R warnings
+from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
+import logging
+rpy2_logger.setLevel(logging.ERROR)
+
 @contextmanager
 def suppress_stdout():
     with open(os.devnull, "w") as devnull:

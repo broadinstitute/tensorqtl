@@ -106,7 +106,7 @@ def main():
         group_s = None
 
     # load genotypes
-    pr = genotypeio.Plink1Reader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
+    pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
     if not args.load_split or args.mode != 'cis_nominal':  # load all genotypes into memory
         genotype_df = pd.DataFrame(pr.load_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
