@@ -25,13 +25,14 @@ setup(
         ]
     },
     install_requires = [
+        'Cython',
         'numpy',
         'pandas',
-        'pyarrow',
-        'scipy',
         'pandas-plink',
-        'torch',
+        'pyarrow',
         'qtl',
+        'scipy',
+        'torch',
     ],
     classifiers = [
         "Programming Language :: Python :: 3",

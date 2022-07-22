@@ -1,10 +1,12 @@
-numpy
-pandas
-scipy
-pandas-plink
+Cython
 ipython
 jupyter
 matplotlib
+numpy
+pandas
+pandas-plink
 pyarrow
-torch
+qtl
 rpy2
+scipy
+torch
