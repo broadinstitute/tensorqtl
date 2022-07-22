@@ -21,6 +21,13 @@ $ virtualenv venv
 $ source venv/bin/activate
 (venv)$ pip install -r install/requirements.txt .
 ```
+To use PLINK 2 binary files ([pgen/pvar/psam](https://www.cog-genomics.org/plink/2.0/input#pgen)), [pgenlib](https://github.com/chrchang/plink-ng/tree/master/2.0/Python) must be installed:
+```
+git clone git@github.com:chrchang/plink-ng.git
+cd plink-ng/2.0/Python/
+python3 setup.py build_ext
+python3 setup.py install
+```
 
 ### Requirements
 
