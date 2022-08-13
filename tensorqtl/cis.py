@@ -644,18 +644,20 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
             if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
                 iresidualizer = residualizer
+                idof = dof
             else:
                 iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
                                                           dtype=torch.float32).to(device))
+                idof = dof - 1
             res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
                                              residualizer=iresidualizer, random_tiebreak=random_tiebreak)
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
             tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_tss[phenotype_id]
-            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes_t.shape[0], dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes_t.shape[0], idof, variant_id, tss_distance, phenotype_id, nperm=nperm)
             if beta_approx:
-                res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
+                res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, idof)
             res_df.append(res_s)
     else:  # grouped mode
         for k, (phenotypes, genotypes, genotype_range, phenotype_ids, group_id) in enumerate(igc.generate_data(verbose=verbose), 1):
@@ -689,15 +691,17 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                 if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
                     iresidualizer = residualizer
+                    idof = dof
                 else:
                     iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
                                                               dtype=torch.float32).to(device))
+                    idof = dof - 1
                 res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
                                                  residualizer=iresidualizer, random_tiebreak=random_tiebreak)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes_t.shape[0], phenotype_id])
-            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], dof,
+            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_tss[phenotype_ids[0]], idof,
                                                 group_id, nperm=nperm, beta_approx=beta_approx)
             res_df.append(res_s)
 
