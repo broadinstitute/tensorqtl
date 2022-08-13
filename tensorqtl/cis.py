@@ -563,7 +563,7 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
 
 
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=None,
-            group_s=None, maf_threshold=0, beta_approx=True, nperm=10000,
+            group_s=None, paired_covariate_df=None, maf_threshold=0, beta_approx=True, nperm=10000,
             window=1000000, random_tiebreak=False, logger=None, seed=None,
             verbose=True, warn_monomorphic=True):
     """Run cis-QTL mapping"""
@@ -580,7 +580,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         logger.write(f'  * {len(group_s.unique())} phenotype groups')
         group_dict = group_s.to_dict()
     if covariates_df is not None:
-        assert np.all(phenotype_df.columns==covariates_df.index), 'Sample names in phenotype matrix columns and covariate matrix rows do not match!'
+        assert phenotype_df.columns.equals(covariates_df.index), 'Sample names in phenotype matrix columns and covariate matrix rows do not match!'
         assert ~(covariates_df.isnull().any().any()), f'Missing or null values in covariates matrix, in columns {",".join(covariates_df.columns[covariates_df.isnull().any(axis=0)].astype(str))}'
         logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
@@ -588,6 +588,10 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     else:
         residualizer = None
         dof = phenotype_df.shape[1] - 2
+    if paired_covariate_df is not None:
+        assert covariates_df is not None and paired_covariate_df.index.equals(covariates_df.index)
+        assert paired_covariate_df.columns.isin(phenotype_df.index).all()
+        logger.write(f'  * including phenotype-specific covariates')
     logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
@@ -638,9 +642,13 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 continue
 
             phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-
+            if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
+                iresidualizer = residualizer
+            else:
+                iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
+                                                          dtype=torch.float32).to(device))
             res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
-                                             residualizer=residualizer, random_tiebreak=random_tiebreak)
+                                             residualizer=iresidualizer, random_tiebreak=random_tiebreak)
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
@@ -679,8 +687,13 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             buf = []
             for phenotype, phenotype_id in zip(phenotypes, phenotype_ids):
                 phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
+                if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
+                    iresidualizer = residualizer
+                else:
+                    iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
+                                                              dtype=torch.float32).to(device))
                 res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t,
-                                                 residualizer=residualizer, random_tiebreak=random_tiebreak)
+                                                 residualizer=iresidualizer, random_tiebreak=random_tiebreak)
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes_t.shape[0], phenotype_id])
