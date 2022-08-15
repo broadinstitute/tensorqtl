@@ -123,24 +123,46 @@ def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_
     return afc_df
 
 
-def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, interaction_s=None,
-                          compute_pi1=False, lambda_qvalue=None):
+def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, paired_covariate_df=None,
+                          interaction_s=None, compute_pi1=False, lambda_qvalue=None):
     """res_df: DataFrame with 'variant_id' column and phenotype IDs as index"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if paired_covariate_df is not None:
+        assert paired_covariate_df.index.equals(covariates_df.index)
+        assert paired_covariate_df.columns.isin(phenotype_df.index).all()
 
     genotypes_t = torch.tensor(genotype_df.loc[res_df['variant_id']].values, dtype=torch.float).to(device)
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
     genotypes_t = genotypes_t[:,genotype_ix_t]
     impute_mean(genotypes_t)
+    af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
 
     phenotypes_t = torch.tensor(phenotype_df.loc[res_df.index].values, dtype=torch.float32).to(device)
     residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
-    af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
 
     if interaction_s is None:
-        genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
-        phenotype_res_t = residualizer.transform(phenotypes_t)  # phenotypes x samples
+        if paired_covariate_df is None:
+            genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
+            phenotype_res_t = residualizer.transform(phenotypes_t)  # phenotypes x samples
+            dof = residualizer.dof
+            dof_t = dof
+        else:
+            genotype_res_t = torch.zeros_like(genotypes_t).to(device)
+            phenotype_res_t = torch.zeros_like(phenotypes_t).to(device)
+            dof = []
+            for k,phenotype_id in enumerate(res_df.index):
+                if phenotype_id in paired_covariate_df:
+                    iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
+                                                              dtype=torch.float32).to(device))
+                else:
+                    iresidualizer = residualizer
+                genotype_res_t[[k]] = iresidualizer.transform(genotypes_t[[k]])
+                phenotype_res_t[[k]] = iresidualizer.transform(phenotypes_t[[k]])
+                dof.append(iresidualizer.dof)
+            dof = np.array(dof)
+            dof_t = torch.Tensor(dof).to(device)
 
         gstd = genotype_res_t.var(1)
         pstd = phenotype_res_t.var(1)
@@ -153,8 +175,7 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
         r_nominal_t = (genotype_res_t * phenotype_res_t).sum(1)
         r2_nominal_t = r_nominal_t.double().pow(2)
 
-        dof = residualizer.dof
-        tstat_t = torch.sqrt((dof * r2_nominal_t) / (1 - r2_nominal_t))
+        tstat_t = torch.sqrt((dof_t * r2_nominal_t) / (1 - r2_nominal_t))
         slope_t = r_nominal_t * std_ratio_t
         slope_se_t = (slope_t.abs().double() / tstat_t).float()
         pval = 2*stats.t.cdf(-np.abs(tstat_t.cpu()), dof)
@@ -163,6 +184,9 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, inte
                               columns=['phenotype_id', 'variant_id', 'ma_samples', 'ma_count', 'af', 'pval_nominal', 'slope', 'slope_se']).infer_objects()
 
     else:
+        if paired_covariate_df is not None:
+            raise NotImplementedError("Paired covariates are not yet supported for interactions")
+
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         ng, ns = genotypes_t.shape
         nps = phenotypes_t.shape[0]
