@@ -49,6 +49,39 @@ def read_dosages(pgen_path, variant_idx, sample_subset=None, dtype=np.float32):
         return dosages
 
 
+def read_alleles(pgen_path, variant_idx, sample_subset=None):
+    """
+    Get alleles for a variant.
+
+    Parameters
+    ----------
+    pgen_path : str
+        Path of PLINK 2 pgen file
+    variant_idx : int
+        Variant index
+    sample_subset : array_like
+        List of sample indexes to select. Must be sorted.
+
+    Returns
+    -------
+    alleles: ndarray (2 * sample_ct)
+        Alleles for the selected variant and samples.
+        Elements 2n and 2n+1 correspond to sample n.
+        Both elements are -9 for missing genotypes.
+        If the genotype is unphased, the lower index appears first.
+    """
+    if sample_subset is not None:
+        sample_subset = np.array(sample_subset, dtype=np.uint32)
+    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
+        if sample_subset is None:
+            num_samples = r.get_raw_sample_ct()
+        else:
+            num_samples = len(sample_subset)
+        alleles = np.zeros(2*num_samples, dtype=np.int32)
+        r.read_alleles(np.array(variant_idx, dtype=np.uint32), alleles)
+    return alleles
+
+
 def read_dosages_list(pgen_path, variant_idxs, sample_subset=None, dtype=np.float32):
     """
     Get dosages for a list of variants.
@@ -80,6 +113,37 @@ def read_dosages_list(pgen_path, variant_idxs, sample_subset=None, dtype=np.floa
         dosages = np.zeros([num_variants, num_samples], dtype=dtype)
         r.read_dosages_list(np.array(variant_idxs, dtype=np.uint32), dosages)
         return dosages
+
+
+def read_alleles_list(pgen_path, variant_idxs, sample_subset=None):
+    """
+    Get alleles for a list of variants.
+
+    Parameters
+    ----------
+    pgen_path : str
+        Path of PLINK 2 pgen file
+    variant_idxs : array_like
+        List of variant indexes
+    sample_subset : array_like
+        List of sample indexes to select. Must be sorted.
+
+    Returns
+    -------
+    alleles : ndarray
+        Alleles for the selected variants and samples.
+    """
+    if sample_subset is not None:
+        sample_subset = np.array(sample_subset, dtype=np.uint32)
+    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
+        if sample_subset is None:
+            num_samples = r.get_raw_sample_ct()
+        else:
+            num_samples = len(sample_subset)
+        num_variants = len(variant_idxs)
+        alleles = np.zeros([num_variants, 2*num_samples], dtype=np.int32)
+        r.read_alleles_list(np.array(variant_idxs, dtype=np.uint32), alleles)
+        return alleles
 
 
 def read_dosages_range(pgen_path, start_idx, end_idx, sample_subset=None, dtype=np.float32):
@@ -115,6 +179,39 @@ def read_dosages_range(pgen_path, start_idx, end_idx, sample_subset=None, dtype=
         dosages = np.zeros([num_variants, num_samples], dtype=dtype)
         r.read_dosages_range(start_idx, end_idx+1, dosages)
         return dosages
+
+
+def read_alleles_range(pgen_path, start_idx, end_idx, sample_subset=None):
+    """
+    Get alleles for a range of variants.
+
+    Parameters
+    ----------
+    pgen_path : str
+        Path of PLINK 2 pgen file
+    start_idx : int
+        Start index of the range to query.
+    end_idx : int
+        End index of the range to query (inclusive).
+    sample_subset : array_like
+        List of sample indexes to select. Must be sorted.
+
+    Returns
+    -------
+    alleles : ndarray
+        Alleles for the selected variants and samples.
+    """
+    if sample_subset is not None:
+        sample_subset = np.array(sample_subset, dtype=np.uint32)
+    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
+        if sample_subset is None:
+            num_samples = r.get_raw_sample_ct()
+        else:
+            num_samples = len(sample_subset)
+        num_variants = end_idx - start_idx + 1
+        alleles = np.zeros([num_variants, 2*num_samples], dtype=np.int32)
+        r.read_alleles_range(start_idx, end_idx+1, alleles)
+        return alleles
 
 
 def read_dosages_df(plink_prefix_path, select_samples=None):
