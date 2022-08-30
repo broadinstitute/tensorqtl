@@ -68,6 +68,7 @@ def init_setup(n, p, L, scaled_prior_variance, varY, residual_variance=None,
         'Xr': torch.zeros(n).to(device),
         'KL': torch.full([L], np.NaN).to(device),
         'lbf': torch.full([L], np.NaN).to(device),
+        'lbf_variable': torch.full([L, p], np.NaN).to(device),
         'sigma2': residual_variance,
         'V': scaled_prior_variance * varY,
         'pi': prior_weights,
@@ -168,7 +169,7 @@ def optimize_prior_variance(optimize_V, betahat, shat2, prior_weights,
     # set V exactly 0 if that beats the numerical value
     # by check_null_threshold in loglik.
     # check_null_threshold = 0.1 is exp(0.1) = 1.1 on likelihood scale;
-    # it means that for parsimony reasons we set estiate of V to zero, if its
+    # it means that for parsimony reasons we set estimate of V to zero, if its
     # numerical estimate is only "negligibly" different from zero. We use a likelihood
     # ratio of exp(check_null_threshold) to define "negligible" in this context.
     # This is fairly modest condition compared to, say, a formal LRT with p-value 0.05.
@@ -276,6 +277,7 @@ def update_each_effect(X_t, xattr, Y_t, s, estimate_prior_variance=False,
         s['mu2'][l] = res['mu2']
         s['V'][l] = res['V']
         s['lbf'][l] = res['lbf_model']
+        s['lbf_variable'][l] = res['lbf']
         s['KL'][l] = -res['loglik'] + SER_posterior_e_loglik(X_t, xattr, R_t, s['sigma2'], res['alpha']*res['mu'], res['alpha']*res['mu2'])
         s['Xr'] = s['Xr'] + compute_Xb(X_t, (s['alpha'][l,:] * s['mu'][l,:]), xattr['scaled_center'], xattr['scaled_scale'])
     return(s)
@@ -488,7 +490,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
     # initialize susie fit
     s = init_setup(n, p, L, scaled_prior_variance, y_t.var(unbiased=True),
                    residual_variance=residual_variance,
-                   prior_weights=prior_weights, null_weight=null_weight)  # , standardize <-- never used?
+                   prior_weights=prior_weights, null_weight=null_weight)
     s = init_finalize(s)
 
     # initialize elbo to NA
@@ -515,7 +517,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
             if verbose:
                 print(f'Objective (iter {i}): {get_objective(X_t, xattr, y_t, s)}')
 
-    s['elbo'] = elbo[1:i+1]  # Remove first (infinite) entry, and trailing NAs.
+    s['elbo'] = elbo[1:i+1].cpu().numpy()  # Remove first (infinite) entry, and trailing NAs.
     s['niter'] = i
 
     if 'converged' not in s:
@@ -532,6 +534,8 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
     s['fitted'] = s['fitted'].squeeze()
     # if track_fit:
     #     s['trace'] = tracking
+
+    s['lbf_variable'] = s['lbf_variable'].cpu().numpy()
 
     # SuSiE CS and PIP
     if coverage is not None and min_abs_corr is not None:
@@ -574,11 +578,10 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
 
     start_time = time.time()
     logger.write('  * fine-mapping')
-    copy_keys = ['pip', 'sets', 'converged', 'niter']
+    copy_keys = ['pip', 'sets', 'converged', 'elbo', 'niter', 'lbf_variable']
+    susie_summary = []
     if not summary_only:
         susie_res = {}
-    else:
-        susie_res = []
     for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(verbose=verbose), 1):
         # copy genotypes to GPU
         genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
@@ -617,26 +620,32 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
 
         af_t = genotypes_t.sum(1) / (2 * genotypes_t.shape[1])
         res['pip'] = pd.DataFrame({'pip':res['pip'], 'af':af_t.cpu().numpy()}, index=variant_ids)
-        if not summary_only:
+        if res['sets']['cs'] is not None:
+            if res['converged'] == True:
+                for c in sorted(res['sets']['cs'], key=lambda x: int(x.replace('L',''))):
+                    cs = res['sets']['cs'][c]  # indexes
+                    p = res['pip'].iloc[cs].copy().reset_index()
+                    p['cs_id'] = c.replace('L','')
+                    p.insert(0, 'phenotype_id', phenotype_id)
+                    susie_summary.append(p)
+                res['lbf_variable'] = res['lbf_variable'][res['sets']['cs_index']]  # drop zero entries
+            else:
+                print(f'    * phenotype ID: {phenotype_id}')
+
+        if not summary_only:  # keep full results
             susie_res[phenotype_id] = {k:res[k] for k in copy_keys}
-        else:
-            if res['sets']['cs'] is not None:
-                # assert res['converged'] == True
-                if res['converged'] == True:
-                    for c in sorted(res['sets']['cs'], key=lambda x: int(x.replace('L',''))):
-                        cs = res['sets']['cs'][c]  # indexes
-                        p = res['pip'].iloc[cs].copy().reset_index()
-                        p['cs_id'] = c.replace('L','')
-                        p.insert(0, 'phenotype_id', phenotype_id)
-                        susie_res.append(p)
-                else:
-                    print(f'    * phenotype ID: {phenotype_id}')
 
     logger.write(f'  Time elapsed: {(time.time()-start_time)/60:.2f} min')
     logger.write('done.')
-    if summary_only and susie_res:
-        susie_res = pd.concat(susie_res, axis=0).rename(columns={'snp':'variant_id'}).reset_index(drop=True)
-    return susie_res
+    if susie_summary:
+        susie_summary = pd.concat(susie_summary, axis=0).rename(columns={'snp': 'variant_id'}).reset_index(drop=True)
+    if summary_only:
+        return susie_summary
+    else:
+        drop_ids = [k for k in susie_res if susie_res[k]['sets']['cs'] is None]
+        for k in drop_ids:
+            del susie_res[k]
+        return susie_summary, susie_res
 
 
 def get_summary(res_dict, verbose=True):
