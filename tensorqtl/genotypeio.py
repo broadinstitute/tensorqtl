@@ -6,6 +6,7 @@ import gzip
 import sys
 import threading
 import queue
+import bisect
 from pandas_plink import read_plink
 
 try:
@@ -496,15 +497,10 @@ class InputGeneratorCis(object):
 
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
-            # r = self.chr_variant_dfs[chrom]['index'].values[
-            #     (self.chr_variant_dfs[chrom]['pos'].values >= tss - self.window) &
-            #     (self.chr_variant_dfs[chrom]['pos'].values <= tss + self.window)
-            # ]
-            # r = [r[0],r[-1]]
 
             m = len(self.chr_variant_dfs[chrom]['pos'].values)
-            lb = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
-            ub = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window, side='right')
+            lb = bisect.bisect_left(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
+            ub = bisect.bisect_right(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window)
             if lb != ub:
                 r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
             else:
@@ -513,6 +509,7 @@ class InputGeneratorCis(object):
             if len(r) > 0:
                 valid_ix.append(phenotype_id)
                 self.cis_ranges[phenotype_id] = r
+
         if len(valid_ix) != self.phenotype_df.shape[0]:
             print('    ** dropping {} phenotypes without variants in cis-window'.format(
                   self.phenotype_df.shape[0] - len(valid_ix)))
