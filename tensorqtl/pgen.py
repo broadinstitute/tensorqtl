@@ -214,12 +214,68 @@ def read_alleles_range(pgen_path, start_idx, end_idx, sample_subset=None):
         return alleles
 
 
-def read_dosages_df(plink_prefix_path, select_samples=None):
+class Pgen(object):
     """
-    Load dosages for all variants and all/selected samples as a dataframe.
 
     To generate the pgen/psam/pvar files from a VCF, run
     plink2 --vcf ${vcf_file} 'dosage=DS' --output-chr chrM --out ${plink_prefix_path}
+    """
+    def __init__(self, plink_prefix_path, select_samples=None):
+
+        self.pvar_df = read_pvar(f"{plink_prefix_path}.pvar")
+        self.psam_df = read_psam(f"{plink_prefix_path}.psam")
+        self.pgen_file = f"{plink_prefix_path}.pgen"
+
+        self.num_variants = self.pvar_df.shape[0]
+        self.variant_ids = self.pvar_df['id'].tolist()
+        self.variant_idx_dict = {i:k for k,i in enumerate(self.variant_ids)}
+
+        self.sample_id_list = self.psam_df.index.tolist()
+        self.set_samples(select_samples)
+
+    def set_samples(self, sample_ids=None, sort=True):
+        """
+        Set samples to load.
+
+        Parameters
+        ----------
+        sample_ids : array_like
+            List of samples to select.
+        sort : bool
+            Preserve sample order from pgen file.
+        """
+        if sample_ids is None:
+            self.sample_ids = self.sample_id_list
+            self.sample_idxs = None
+        else:
+            sample_idxs = [self.sample_id_list.index(i) for i in sample_ids]
+            if sort:
+                sidx = np.argsort(sample_idxs)
+                sample_idxs = [sample_idxs[i] for i in sidx]
+                sample_ids = [sample_ids[i] for i in sidx]
+            self.sample_ids = sample_ids
+            self.sample_idxs = sample_idxs
+
+    def read_dosages_list(self, variant_ids, dtype=np.float32):
+        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
+        dosages = read_dosages_list(self.pgen_file, variant_idxs, sample_subset=None, dtype=dtype)
+        return pd.DataFrame(dosages, index=variant_ids, columns=self.sample_ids)
+
+    def read_alleles_list(self, variant_ids):
+        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
+        alleles = read_alleles_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs)
+        df1 = pd.DataFrame(alleles[:,::2], index=variant_ids, columns=self.sample_ids)
+        df2 = pd.DataFrame(alleles[:,1::2], index=variant_ids, columns=self.sample_ids)
+        return df1, df2
+
+    def load_dosages_df(self):
+        dosages = read_dosages_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
+        return pd.DataFrame(dosages, index=self.pvar_df['id'], columns=self.sample_ids)
+
+
+def load_dosages_df(plink_prefix_path, select_samples=None):
+    """
+    Load dosages for all variants and all/selected samples as a dataframe.
 
     Parameters
     ----------
@@ -233,20 +289,5 @@ def read_dosages_df(plink_prefix_path, select_samples=None):
     dosages_df : pd.DataFrame (variants x samples)
         Genotype dosages for the selected samples.
     """
-    pvar_df = read_pvar(f"{plink_prefix_path}.pvar")
-    psam_df = read_psam(f"{plink_prefix_path}.psam")
-    pgen_file = f"{plink_prefix_path}.pgen"
-    sample_ids = psam_df.index.tolist()
-    num_variants = pvar_df.shape[0]
-
-    if select_samples is not None:
-        sample_idxs = [sample_ids.index(i) for i in select_samples]
-        sidx = np.argsort(sample_idxs)
-        sample_idxs = [sample_idxs[i] for i in sidx]
-        sample_ids = [select_samples[i] for i in sidx]
-    else:
-        sample_idxs = None
-
-    dosages = read_dosages_range(pgen_file, 0, num_variants-1, sample_subset=sample_idxs)
-    dosages = pd.DataFrame(dosages, index=pvar_df['id'], columns=sample_ids)
-    return dosages
+    p = Pgen(plink_prefix_path, select_samples=select_samples)
+    return p.load_dosages_df()
