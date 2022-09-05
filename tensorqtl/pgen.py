@@ -289,7 +289,18 @@ def read_alleles_range(pgen_path, start_idx, end_idx, sample_subset=None):
     return alleles
 
 
-class Pgen(object):
+def _impute_mean(genotypes):
+    """Impute missing genotypes to mean"""
+    m = genotypes == -9
+    ix = np.nonzero(m)[0]
+    if len(ix) > 0:
+        a = genotypes.sum(1)
+        b = m.sum(1)
+        mu = (a + 9*b) / (genotypes.shape[1] - b)
+        genotypes[m] = mu[ix]
+
+
+class PgenReader(object):
     """
 
     To generate the pgen/psam/pvar files from a VCF, run
@@ -331,14 +342,33 @@ class Pgen(object):
             self.sample_ids = sample_ids
             self.sample_idxs = sample_idxs
 
-    def read_list(self, variant_ids, dtype=np.int32):
+    def read(self, variant_id, impute_mean=True, dtype=np.float32):
+        """Read genotypes (as 0,1,2,-9; impute missing values to mean)."""
+        variant_idx = self.variant_idx_dict[variant_id]
+        genotypes = read(self.pgen_file, variant_idx, sample_subset=self.sample_idxs,
+                         dtype=np.int8).astype(dtype)
+        if impute_mean:
+            m = genotypes == -9
+            if any(m):
+                genotypes[m] = genotypes[~m].mean()
+        return pd.Series(genotypes, index=self.sample_ids, name=variant_id)
+
+    def read_dosages(self, variant_id, dtype=np.float32):
+        variant_idx = self.variant_idx_dict[variant_id]
+        dosages = read_dosages(self.pgen_file, variant_idx, sample_subset=self.sample_idxs, dtype=dtype)
+        return pd.Series(dosages, index=self.sample_ids, name=variant_id)
+
+    def read_list(self, variant_ids, impute_mean=True, dtype=np.float32):
         variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
-        genotypes = read_list(self.pgen_file, variant_idxs, sample_subset=None, dtype=dtype)
+        genotypes = read_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs,
+                              dtype=np.int8).astype(dtype)
+        if impute_mean:
+            _impute_mean(genotypes)
         return pd.DataFrame(genotypes, index=variant_ids, columns=self.sample_ids)
 
     def read_dosages_list(self, variant_ids, dtype=np.float32):
         variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
-        dosages = read_dosages_list(self.pgen_file, variant_idxs, sample_subset=None, dtype=dtype)
+        dosages = read_dosages_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs, dtype=dtype)
         return pd.DataFrame(dosages, index=variant_ids, columns=self.sample_ids)
 
     def read_alleles_list(self, variant_ids):
@@ -349,12 +379,42 @@ class Pgen(object):
         return df1, df2
 
     def load_genotypes_df(self):
+        """Load all genotypes as np.int8, without imputing missing values."""
         genotypes = read_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
         return pd.DataFrame(genotypes, index=self.pvar_df['id'], columns=self.sample_ids)
 
     def load_dosages_df(self):
+        """Load all dosages."""
         dosages = read_dosages_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
         return pd.DataFrame(dosages, index=self.pvar_df['id'], columns=self.sample_ids)
+
+    def get_pairwise_ld(self, id1, id2):
+        """Compute pairwise LD (R2) between (lists of) variants"""
+        if isinstance(id1, str) and isinstance(id2, str):
+            g1 = self.read(id1, dtype=np.float64)
+            g2 = self.read(id2, dtype=np.float64)
+            g1 -= g1.mean()
+            g2 -= g2.mean()
+            return (g1 * g2).sum()**2 / ( (g1**2).sum() * (g2**2).sum() )
+        elif isinstance(id1, str):
+            g1 = self.read(id1, dtype=np.float64)
+            g2 = self.read_list(id2, dtype=np.float64)
+            g1 -= g1.mean()
+            g2 -= g2.values.mean(1, keepdims=True)
+            return (g1 * g2).sum(1)**2 / ( (g1**2).sum() * (g2**2).sum(1) )
+        elif isinstance(id2, str):
+            g1 = self.read_list(id1, dtype=np.float64)
+            g2 = self.read(id2, dtype=np.float64)
+            g1 -= g1.values.mean(1, keepdims=True)
+            g2 -= g2.mean()
+            return (g1 * g2).sum(1)**2 / ( (g1**2).sum(1) * (g2**2).sum() )
+        else:
+            assert len(id1) == len(id2)
+            g1 = self.read_list(id1, dtype=np.float64).values
+            g2 = self.read_list(id2, dtype=np.float64).values
+            g1 -= g1.mean(1, keepdims=True)
+            g2 -= g2.mean(1, keepdims=True)
+            return (g1 * g2).sum(1) ** 2 / ( (g1**2).sum(1) * (g2**2).sum(1) )
 
 
 def load_dosages_df(plink_prefix_path, select_samples=None):
