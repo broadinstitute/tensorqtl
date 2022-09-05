@@ -9,12 +9,59 @@ import pgenlib as pg
 def read_pvar(pvar_path):
     """Read pvar file as pd.DataFrame"""
     return pd.read_csv(pvar_path, sep='\t', comment='#',
-                       names=['chrom', 'pos', 'id', 'ref', 'alt', 'qual', 'filter', 'info'])
+                       names=['chrom', 'pos', 'id', 'ref', 'alt', 'qual', 'filter', 'info'],
+                       dtype={'chrom':str, 'pos':np.int32, 'id':str, 'ref':str, 'alt':str,
+                              'qual':str, 'filter':str, 'info':str})
 
 
 def read_psam(psam_path):
     """Read psam file as pd.DataFrame"""
     return pd.read_csv(psam_path, sep='\t', index_col=0)
+
+
+def hardcall_phase_present(pgen_path):
+    """Returns True iff phased hardcalls may be present"""
+    with pg.PgenReader(pgen_path.encode()) as r:
+        return r.hardcall_phase_present()
+
+
+def get_reader(pgen_path, sample_subset=None):
+    """"""
+    if sample_subset is not None:
+        sample_subset = np.array(sample_subset, dtype=np.uint32)
+    reader = pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset)
+    if sample_subset is None:
+        num_samples = reader.get_raw_sample_ct()
+    else:
+        num_samples = len(sample_subset)
+    return reader, num_samples
+
+
+def read(pgen_path, variant_idx, sample_subset=None, dtype=np.int8):
+    """
+    Get genotypes for a variant.
+
+    Parameters
+    ----------
+    pgen_path : str
+        Path of PLINK 2 pgen file
+    variant_idx : int
+        Variant index
+    sample_subset : array_like
+        List of sample indexes to select. Must be sorted.
+    dtype : np.int{8,32,64}
+        Data type of the returned array.
+
+    Returns
+    -------
+    dosages : ndarray
+        Genotypes (as {0, 1, 2, -9}) for the selected variant and samples.
+    """
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    genotypes = np.zeros(num_samples, dtype=dtype)
+    with reader as r:
+        r.read(np.array(variant_idx, dtype=np.uint32), genotypes)
+    return genotypes
 
 
 def read_dosages(pgen_path, variant_idx, sample_subset=None, dtype=np.float32):
@@ -37,16 +84,11 @@ def read_dosages(pgen_path, variant_idx, sample_subset=None, dtype=np.float32):
     dosages : ndarray
         Genotype dosages for the selected variant and samples.
     """
-    if sample_subset is not None:
-        sample_subset = np.array(sample_subset, dtype=np.uint32)
-    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
-        if sample_subset is None:
-            num_samples = r.get_raw_sample_ct()
-        else:
-            num_samples = len(sample_subset)
-        dosages = np.zeros(num_samples, dtype=dtype)
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    dosages = np.zeros(num_samples, dtype=dtype)
+    with reader as r:
         r.read_dosages(np.array(variant_idx, dtype=np.uint32), dosages)
-        return dosages
+    return dosages
 
 
 def read_alleles(pgen_path, variant_idx, sample_subset=None):
@@ -70,16 +112,39 @@ def read_alleles(pgen_path, variant_idx, sample_subset=None):
         Both elements are -9 for missing genotypes.
         If the genotype is unphased, the lower index appears first.
     """
-    if sample_subset is not None:
-        sample_subset = np.array(sample_subset, dtype=np.uint32)
-    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
-        if sample_subset is None:
-            num_samples = r.get_raw_sample_ct()
-        else:
-            num_samples = len(sample_subset)
-        alleles = np.zeros(2*num_samples, dtype=np.int32)
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    alleles = np.zeros(2*num_samples, dtype=np.int32)
+    with reader as r:
         r.read_alleles(np.array(variant_idx, dtype=np.uint32), alleles)
     return alleles
+
+
+def read_list(pgen_path, variant_idxs, sample_subset=None, dtype=np.int8):
+    """
+    Get genotypes for a list of variants.
+
+    Parameters
+    ----------
+    pgen_path : str
+        Path of PLINK 2 pgen file
+    variant_idxs : array_like
+        List of variant indexes
+    sample_subset : array_like
+        List of sample indexes to select. Must be sorted.
+    dtype : np.int{8,32,64}
+        Data type of the returned array.
+
+    Returns
+    -------
+    dosages : ndarray
+        Genotypes for the selected variants and samples.
+    """
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    num_variants = len(variant_idxs)
+    genotypes = np.zeros([num_variants, num_samples], dtype=dtype)
+    with reader as r:
+        r.read_list(np.array(variant_idxs, dtype=np.uint32), genotypes)
+    return genotypes
 
 
 def read_dosages_list(pgen_path, variant_idxs, sample_subset=None, dtype=np.float32):
@@ -102,17 +167,12 @@ def read_dosages_list(pgen_path, variant_idxs, sample_subset=None, dtype=np.floa
     dosages : ndarray
         Genotype dosages for the selected variants and samples.
     """
-    if sample_subset is not None:
-        sample_subset = np.array(sample_subset, dtype=np.uint32)
-    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
-        if sample_subset is None:
-            num_samples = r.get_raw_sample_ct()
-        else:
-            num_samples = len(sample_subset)
-        num_variants = len(variant_idxs)
-        dosages = np.zeros([num_variants, num_samples], dtype=dtype)
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    num_variants = len(variant_idxs)
+    dosages = np.zeros([num_variants, num_samples], dtype=dtype)
+    with reader as r:
         r.read_dosages_list(np.array(variant_idxs, dtype=np.uint32), dosages)
-        return dosages
+    return dosages
 
 
 def read_alleles_list(pgen_path, variant_idxs, sample_subset=None):
@@ -133,17 +193,42 @@ def read_alleles_list(pgen_path, variant_idxs, sample_subset=None):
     alleles : ndarray
         Alleles for the selected variants and samples.
     """
-    if sample_subset is not None:
-        sample_subset = np.array(sample_subset, dtype=np.uint32)
-    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
-        if sample_subset is None:
-            num_samples = r.get_raw_sample_ct()
-        else:
-            num_samples = len(sample_subset)
-        num_variants = len(variant_idxs)
-        alleles = np.zeros([num_variants, 2*num_samples], dtype=np.int32)
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    num_variants = len(variant_idxs)
+    alleles = np.zeros([num_variants, 2*num_samples], dtype=np.int32)
+    with reader as r:
         r.read_alleles_list(np.array(variant_idxs, dtype=np.uint32), alleles)
-        return alleles
+    return alleles
+
+
+def read_range(pgen_path, start_idx, end_idx, sample_subset=None, dtype=np.int8):
+    """
+    Get genotypes for a range of variants.
+
+    Parameters
+    ----------
+    pgen_path : str
+        Path of PLINK 2 pgen file
+    start_idx : int
+        Start index of the range to query.
+    end_idx : int
+        End index of the range to query (inclusive).
+    sample_subset : array_like
+        List of sample indexes to select. Must be sorted.
+    dtype : np.int{8,32,64}
+        Data type of the returned array.
+
+    Returns
+    -------
+    dosages : ndarray
+        Genotypes for the selected variants and samples.
+    """
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    num_variants = end_idx - start_idx + 1
+    genotypes = np.zeros([num_variants, num_samples], dtype=dtype)
+    with reader as r:
+        r.read_range(start_idx, end_idx+1, genotypes)
+    return genotypes
 
 
 def read_dosages_range(pgen_path, start_idx, end_idx, sample_subset=None, dtype=np.float32):
@@ -168,17 +253,12 @@ def read_dosages_range(pgen_path, start_idx, end_idx, sample_subset=None, dtype=
     dosages : ndarray
         Genotype dosages for the selected variants and samples.
     """
-    if sample_subset is not None:
-        sample_subset = np.array(sample_subset, dtype=np.uint32)
-    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
-        if sample_subset is None:
-            num_samples = r.get_raw_sample_ct()
-        else:
-            num_samples = len(sample_subset)
-        num_variants = end_idx - start_idx + 1
-        dosages = np.zeros([num_variants, num_samples], dtype=dtype)
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    num_variants = end_idx - start_idx + 1
+    dosages = np.zeros([num_variants, num_samples], dtype=dtype)
+    with reader as r:
         r.read_dosages_range(start_idx, end_idx+1, dosages)
-        return dosages
+    return dosages
 
 
 def read_alleles_range(pgen_path, start_idx, end_idx, sample_subset=None):
@@ -201,17 +281,12 @@ def read_alleles_range(pgen_path, start_idx, end_idx, sample_subset=None):
     alleles : ndarray
         Alleles for the selected variants and samples.
     """
-    if sample_subset is not None:
-        sample_subset = np.array(sample_subset, dtype=np.uint32)
-    with pg.PgenReader(pgen_path.encode(), sample_subset=sample_subset) as r:
-        if sample_subset is None:
-            num_samples = r.get_raw_sample_ct()
-        else:
-            num_samples = len(sample_subset)
-        num_variants = end_idx - start_idx + 1
-        alleles = np.zeros([num_variants, 2*num_samples], dtype=np.int32)
+    reader, num_samples = get_reader(pgen_path, sample_subset=sample_subset)
+    num_variants = end_idx - start_idx + 1
+    alleles = np.zeros([num_variants, 2*num_samples], dtype=np.int32)
+    with reader as r:
         r.read_alleles_range(start_idx, end_idx+1, alleles)
-        return alleles
+    return alleles
 
 
 class Pgen(object):
@@ -256,6 +331,11 @@ class Pgen(object):
             self.sample_ids = sample_ids
             self.sample_idxs = sample_idxs
 
+    def read_list(self, variant_ids, dtype=np.int32):
+        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
+        genotypes = read_list(self.pgen_file, variant_idxs, sample_subset=None, dtype=dtype)
+        return pd.DataFrame(genotypes, index=variant_ids, columns=self.sample_ids)
+
     def read_dosages_list(self, variant_ids, dtype=np.float32):
         variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
         dosages = read_dosages_list(self.pgen_file, variant_idxs, sample_subset=None, dtype=dtype)
@@ -267,6 +347,10 @@ class Pgen(object):
         df1 = pd.DataFrame(alleles[:,::2], index=variant_ids, columns=self.sample_ids)
         df2 = pd.DataFrame(alleles[:,1::2], index=variant_ids, columns=self.sample_ids)
         return df1, df2
+
+    def load_genotypes_df(self):
+        genotypes = read_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
+        return pd.DataFrame(genotypes, index=self.pvar_df['id'], columns=self.sample_ids)
 
     def load_dosages_df(self):
         dosages = read_dosages_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
