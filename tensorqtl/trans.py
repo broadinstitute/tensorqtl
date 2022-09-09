@@ -356,8 +356,11 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
             max_r2_t = torch.FloatTensor(nperms).fill_(0).to(device)
             for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(chrom=chrom, verbose=verbose, enum_start=k+1), k+1):
                 genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-                genotypes_t, _, _ = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
+                genotypes_t = genotypes_t[:, genotype_ix_t]
+                impute_mean(genotypes_t)
+                genotypes_t, _, _ = filter_maf(genotypes_t, variant_ids, maf_threshold)
                 n_variants += genotypes_t.shape[0]
+
                 r2_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)
                 del genotypes_t
                 m,_ = r2_t.max(0)
@@ -401,8 +404,11 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
         n_variants = 0
         for k, (genotypes, variant_ids) in enumerate(ggt.generate_data(verbose=verbose), 1):
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-            genotypes_t, _, _ = filter_maf(genotypes_t[:, genotype_ix_t], variant_ids, maf_threshold)
+            genotypes_t = genotypes_t[:, genotype_ix_t]
+            impute_mean(genotypes_t)
+            genotypes_t, _, _ = filter_maf(genotypes_t, variant_ids, maf_threshold)
             n_variants += genotypes_t.shape[0]
+
             r2_t = calculate_corr(genotypes_t, permutations_t, residualizer=residualizer).pow(2)
             del genotypes_t
             m,_ = r2_t.max(0)
