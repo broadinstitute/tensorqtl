@@ -4,6 +4,7 @@
 import numpy as np
 import pandas as pd
 import pgenlib as pg
+import bisect
 
 
 def read_pvar(pvar_path):
@@ -319,6 +320,10 @@ class PgenReader(object):
         self.sample_id_list = self.psam_df.index.tolist()
         self.set_samples(select_samples)
 
+        variant_df = self.pvar_df.set_index('id')[['chrom', 'pos']]
+        variant_df['index'] = np.arange(variant_df.shape[0])
+        self.variant_dfs = {c:g[['pos', 'index']] for c,g in variant_df.groupby('chrom')}
+
     def set_samples(self, sample_ids=None, sort=True):
         """
         Set samples to load.
@@ -353,11 +358,6 @@ class PgenReader(object):
                 genotypes[m] = genotypes[~m].mean()
         return pd.Series(genotypes, index=self.sample_ids, name=variant_id)
 
-    def read_dosages(self, variant_id, dtype=np.float32):
-        variant_idx = self.variant_idx_dict[variant_id]
-        dosages = read_dosages(self.pgen_file, variant_idx, sample_subset=self.sample_idxs, dtype=dtype)
-        return pd.Series(dosages, index=self.sample_ids, name=variant_id)
-
     def read_list(self, variant_ids, impute_mean=True, dtype=np.float32):
         variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
         genotypes = read_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs,
@@ -365,6 +365,30 @@ class PgenReader(object):
         if impute_mean:
             _impute_mean(genotypes)
         return pd.DataFrame(genotypes, index=variant_ids, columns=self.sample_ids)
+
+    def get_range(self, region):
+        """Get variant indexes corresponding to region specified as 'chr:start-end'."""
+        chrom, pos = region.split(':')
+        start, end = [int(i) for i in pos.split('-')]
+        lb = bisect.bisect_left(self.variant_dfs[chrom]['pos'].values, start)
+        ub = bisect.bisect_right(self.variant_dfs[chrom]['pos'].values, end)
+        if lb != ub:
+            r = self.variant_dfs[chrom]['index'].values[[lb, ub - 1]]
+        else:
+            r = []
+        return r
+
+    def read_range(self, start_idx, end_idx, impute_mean=True, dtype=np.float32):
+        genotypes = read_range(self.pgen_file, start_idx, end_idx, sample_subset=self.sample_idxs,
+                               dtype=np.int8).astype(dtype)
+        if impute_mean:
+            _impute_mean(genotypes)
+        return pd.DataFrame(genotypes, index=self.variant_ids[start_idx:end_idx+1], columns=self.sample_ids)
+
+    def read_dosages(self, variant_id, dtype=np.float32):
+        variant_idx = self.variant_idx_dict[variant_id]
+        dosages = read_dosages(self.pgen_file, variant_idx, sample_subset=self.sample_idxs, dtype=dtype)
+        return pd.Series(dosages, index=self.sample_ids, name=variant_id)
 
     def read_dosages_list(self, variant_ids, dtype=np.float32):
         variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]

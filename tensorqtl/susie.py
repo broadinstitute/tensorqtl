@@ -553,7 +553,7 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
     """
     SuSiE fine-mapping: computes SuSiE model for all phenotypes
     """
-    assert np.all(phenotype_df.columns==covariates_df.index)
+    assert phenotype_df.columns.equals(covariates_df.index)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if logger is None:
@@ -564,6 +564,7 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     logger.write(f'  * {covariates_df.shape[1]} covariates')
     logger.write(f'  * {variant_df.shape[0]} variants')
+    logger.write(f'  * cis-window: ±{window:,}')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample MAF >= {maf_threshold} filter')
 
