@@ -173,13 +173,13 @@ def run_pairs(genotype_df, variant_df, phenotype1_df, phenotype2_df, phenotype_p
         genotypes2_t = genotypes_t[:,genotype2_ix_t]
         del genotypes_t
 
+        impute_mean(genotypes1_t)
+        impute_mean(genotypes2_t)
         # filter monomorphic sites
         m = ((genotypes1_t==0).all(1) | (genotypes1_t==1).all(1) | (genotypes1_t==2).all(1) |
              (genotypes2_t==0).all(1) | (genotypes2_t==1).all(1) | (genotypes2_t==2).all(1))
         genotypes1_t = genotypes1_t[~m]
         genotypes2_t = genotypes2_t[~m]
-        impute_mean(genotypes1_t)
-        impute_mean(genotypes2_t)
 
         if maf_threshold > 0:
             maf1_t = calculate_maf(genotypes1_t)
