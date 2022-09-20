@@ -524,7 +524,7 @@ class InputGeneratorCis(object):
 
 
     @background(max_prefetch=6)
-    def generate_data(self, chrom=None, verbose=False):
+    def generate_data(self, chrom=None, verbose=False, batch_size=1000):
         """
         Generate batches from genotype data
 
@@ -550,6 +550,7 @@ class InputGeneratorCis(object):
                 p = self.phenotype_df.values[index_dict[phenotype_id]]
                 # p = self.phenotype_df.values[k]
                 r = self.cis_ranges[phenotype_id]
+		
                 yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), phenotype_id
         else:
             gdf = self.group_s[phenotype_ids].groupby(self.group_s, sort=False)
