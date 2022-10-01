@@ -2,6 +2,7 @@ import pandas as pd
 import tempfile
 import numpy as np
 import subprocess
+import os
 import gzip
 import sys
 import threading
@@ -223,120 +224,36 @@ class PlinkReader(object):
         return pd.DataFrame(self.bed.compute(), index=self.bim['snp'], columns=self.fam['iid'])
 
 
-class Plink2Reader(object):
-    def __init__(self, plink_prefix_path, verbose=True, dtype=np.float32):
-        """
-        Class for reading genotypes from PLINK 2 pgen files
-
-        plink_prefix_path: prefix to PLINK pgen,psam,pvar files
-        select_samples: specify a subset of samples
-
-        Notes:
-          Use this command to convert a VCF to PLINK format:
-            plink2 \
-                --output-chr chrM \
-                --vcf ${plink_prefix_path}.vcf.gz \
-                --out ${plink_prefix_path}
-          To use dosages, run:
-            plink2 \
-                --output-chr chrM \
-                --vcf ${plink_prefix_path}.vcf.gz 'dosage=DS' \
-                --out ${plink_prefix_path}
-
-          Requires pgenlib: https://github.com/chrchang/plink-ng/tree/master/2.0/Python
-        """
-
-        self.psam = pgen.read_psam(f"{plink_prefix_path}.psam")
-        self.pvar = pgen.read_pvar(f"{plink_prefix_path}.pvar")
-        self.pgen_file = f"{plink_prefix_path}.pgen"
-        self.sample_ids = self.psam.index.tolist()
-        self.n_samples = self.psam.shape[0]
-        self.chrs = list(self.pvar['chrom'].unique())
-        self.variant_pos = {i:g['pos'] for i,g in self.pvar.set_index('id')[['chrom', 'pos']].groupby('chrom')}
-        self.variant_pos_dict = self.pvar.set_index('id')['pos'].to_dict()
-
-    def get_sample_indexes(self, sample_ids):
-        """Get sorted indexes corresponding to sample IDs"""
-        sample_idxs = [self.sample_ids.index(i) for i in sample_ids]
-        # sort sample IDs by pgen order
-        sidx = np.argsort(sample_idxs)
-        sample_idxs = [sample_idxs[i] for i in sidx]
-        sample_ids_sorted = [sample_ids[i] for i in sidx]
-        return sample_idxs, sample_ids_sorted
-
-    def get_region_index(self, region_str, return_pos=False):
-        s = region_str.split(':')
-        chrom = s[0]
-        c = self.pvar[self.pvar['chrom'] == chrom]
-        if len(s) > 1:
-            start, end = s[1].split('-')
-            c = c[(c['pos'] >= int(start)) & (c['pos'] <= int(end))]
-        if return_pos:
-            return c.index.values, c.set_index('id')['pos']
-        else:
-            return c.index.values
-
-    def get_region(self, region_str, sample_ids=None, impute=False, verbose=False, dtype=np.float32):
-        """Get genotypes for a region defined by 'chr:start-end' or 'chr'"""
-        ix, pos_s = self.get_region_index(region_str, return_pos=True)
-        g = pgen.read_dosages_range(self.pgen_file, ix[0], ix[-1], dtype=dtype)
-        if sample_ids is not None:
-            ix = [self.sample_ids.index(i) for i in sample_ids]
-            g = g[:, ix]
-        if impute:
-            _impute_mean(g, missing=-9, verbose=verbose)
-        return g, pos_s
-
-    def get_genotypes(self, variant_ids, sample_ids=None, impute=False, verbose=False, dtype=np.float32):
-        """Load genotypes for selected variant IDs"""
-        c = self.pvar[self.pvar['id'].isin(variant_ids)]
-        g = pgen.read_dosages_list(self.pgen_file, c.index, dtype=dtype)
-        if sample_ids is not None:
-            ix = [self.sample_ids.index(i) for i in sample_ids]
-            g = g[:, ix]
-        if impute:
-            _impute_mean(g, missing=-9, verbose=verbose)
-        return g, c.set_index('id')['pos']
-
-    def get_genotype(self, variant_id, sample_ids=None, impute=False, verbose=False, dtype=np.float32):
-        """Load genotypes for a single variant ID as pd.Series"""
-        g,_ = self.get_genotypes([variant_id], sample_ids=sample_ids, impute=impute, verbose=verbose, dtype=dtype)
-        if sample_ids is None:
-            return pd.Series(g[0], index=self.sample_ids, name=variant_id)
-        else:
-            return pd.Series(g[0], index=sample_ids, name=variant_id)
-
-    def load_genotypes(self, sample_ids=None):
-        """Load all genotypes into memory, as pd.DataFrame"""
-        if sample_ids is not None:
-            sample_idxs, sample_ids = self.get_sample_indexes(sample_ids)
-        else:
-            sample_idxs = None
-            sample_ids = self.sample_ids
-
-        return pd.DataFrame(pgen.read_dosages_range(self.pgen_file, 0, self.pvar.shape[0]-1, sample_subset=sample_idxs),
-                            index=self.pvar['id'], columns=sample_ids)
-
-
-def load_genotypes(plink_prefix_path, select_samples=None, dtype=np.int8):
+def load_genotypes(genotype_path, select_samples=None, dosages=False):
     """Load all genotypes into a dataframe"""
-
-    print('Loading genotypes ... ', end='', flush=True)
-
-    # identify format
-    if all([os.path.exists(f"{plink_prefix_path}.{ext}" for ext in ['bed', 'bim', 'fam'])]):
-        pr = PlinkReader(plink_prefix_path, select_samples=select_samples, dtype=dtype)
-        df = pr.load_genotypes()
-    elif all([os.path.exists(f"{plink_prefix_path}.{ext}" for ext in ['pgen', 'psam', 'pvar'])]):
+    if all([os.path.exists(f"{genotype_path}.{ext}") for ext in ['pgen', 'psam', 'pvar']]):
         if pgen is None:
-            raise ImportError('The pgenlib package must be installed to use PLINK 2 pgen/psam/pvar files.')
-        pr = Plink2Reader(plink_prefix_path)
-        df = pr.load_genotypes(sample_ids=select_samples)
+            raise ImportError('pgenlib must be installed to use PLINK 2 pgen/psam/pvar files.')
+        pgr = pgen.PgenReader(genotype_path, select_samples=select_samples)
+        variant_df = pgr.pvar_df.set_index('id')[['chrom', 'pos']]
+        if dosages:
+            genotype_df = pgr.load_dosages()
+        else:
+            genotype_df = pgr.load_genotypes()
+            # temporary workaround
+            genotype_df.values[genotype_df.values == -9] = -1
+    elif all([os.path.exists(f"{genotype_path}.{ext}") for ext in ['bed', 'bim', 'fam']]):
+        pr = PlinkReader(genotype_path, select_samples=select_samples, dtype=np.int8)
+        genotype_df = pr.load_genotypes()
+        variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
+    elif genotype_path.endswith('.parquet'):
+        genotype_df = pd.read_parquet(genotype_path)
+        variant_df = None
+    elif genotype_path.endswith('.gz'):
+        with gzip.open(genotype_path, 'rt') as f:
+            header = f.readline().strip().split('\t')
+        dtypes = {i:np.float32 for i in header}
+        dtypes[header[0]] = str
+        genotype_df = pd.read_csv(genotype_path, sep='\t', index_col=0, dtype=dtypes)
+        variant_df = None
     else:
-        raise ValueError(f"No compatible PLINK files found for {plink_prefix_path}")
-
-    print('done.', flush=True)
-    return df
+        raise ValueError(f"Failed to load genotypes from {genotype_path}. Supported formats: pgen/psam/pvar, bed/bim/fam, parquet, tsv.gz")
+    return genotype_df, variant_df
 
 
 def get_vcf_region(region_str, vcfpath, field='GT', sample_ids=None, select_samples=None, impute_missing=True):

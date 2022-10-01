@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
     parser.add_argument('--maf_threshold', default=0, type=np.float64, help='Include only genotypes with minor allele frequency >= maf_threshold. Default: 0')
     parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
+    parser.add_argument('--dosages', action='store_true', help='Load dosages instead of genotypes (only applies to PLINK2 bgen input).')
     parser.add_argument('--return_dense', action='store_true', help='Return dense output for trans-QTL.')
     parser.add_argument('--return_r2', action='store_true', help='Return r2 (only for sparse trans-QTL output)')
     parser.add_argument('--best_only', action='store_true', help='Only write lead association for each phenotype (interaction mode only)')
@@ -106,10 +107,10 @@ def main():
         group_s = None
 
     # load genotypes
-    pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
-    variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
     if not args.load_split or args.mode != 'cis_nominal':  # load all genotypes into memory
-        genotype_df = pd.DataFrame(pr.load_genotypes(), index=pr.bim['snp'], columns=pr.fam['iid'])
+        genotype_df, variant_df = genotypeio.load_genotypes(args.genotype_path, select_samples=phenotype_df.columns, dosages=args.dosages)
+        if variant_df is None:
+            assert not args.mode.startswith('cis'), f"Genotype data without variant positions is only supported for mode='trans'."
 
     if args.mode.startswith('cis'):
         if args.mode == 'cis':
@@ -136,6 +137,8 @@ def main():
                     signif_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl.signif_pairs.parquet'))
 
             else:  # load genotypes for each chromosome separately
+                # currently only supports PLINK1.9 inputs, TODO
+                pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
                 top_df = []
                 for chrom in pr.chrs:
                     g, pos_s = pr.get_region(chrom)
@@ -189,8 +192,9 @@ def main():
                                   maf_threshold=maf_threshold, batch_size=args.batch_size,
                                   return_r2=args.return_r2, logger=logger)
 
-        logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
-        pairs_df = trans.filter_cis(pairs_df, tss_dict, variant_df, window=5000000)
+        if variant_df is not None:
+            logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
+            pairs_df = trans.filter_cis(pairs_df, tss_dict, variant_df, window=5000000)
 
         logger.write('  * writing output')
         if not args.output_text:
