@@ -10,6 +10,9 @@ import queue
 import bisect
 from pandas_plink import read_plink
 
+sys.path.insert(1, os.path.dirname(__file__))
+from core import *
+
 try:
     import pgen
 except ImportError as e:
@@ -241,6 +244,10 @@ def load_genotypes(genotype_path, select_samples=None, dosages=False):
         pr = PlinkReader(genotype_path, select_samples=select_samples, dtype=np.int8)
         genotype_df = pr.load_genotypes()
         variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
+    elif genotype_path.endswith('.bed.parquet') or genotype_path.endswith('.bed.gz'):
+        genotype_df, variant_df = read_phenotype_bed(genotype_path)
+        assert variant_df.columns[1] == 'pos', "The BED file must define a single position for each variant, with start + 1 == end."
+        variant_df.columns = ['chrom', 'pos']
     elif genotype_path.endswith('.parquet'):
         genotype_df = pd.read_parquet(genotype_path)
         variant_df = None

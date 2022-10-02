@@ -366,6 +366,7 @@ def calculate_beta_approx_pval(r2_perm, r2_nominal, dof_init, tol=1e-4):
 #------------------------------------------------------------------------------
 #  i/o functions
 #------------------------------------------------------------------------------
+
 def read_phenotype_bed(phenotype_bed):
     """Load phenotype BED file as phenotype and TSS DataFrames"""
     if phenotype_bed.endswith('.bed.gz'):
@@ -376,9 +377,12 @@ def read_phenotype_bed(phenotype_bed):
     else:
         raise ValueError('Unsupported file type.')
     phenotype_df.rename(columns={i:i.lower().replace('#chr','chr') for i in phenotype_df.columns[:3]}, inplace=True)
-    # make sure TSS/cis-window is properly defined
-    if not (phenotype_df['start']+1 == phenotype_df['end']).all():
-        raise ValueError("The BED file must define the TSS/cis-window center, with start+1 == end.")
-    phenotype_pos_df = phenotype_df[['chr', 'end']].rename(columns={'end':'tss'})
+
+    if (phenotype_df['start'] + 1 == phenotype_df['end']).all():
+        pos_df = phenotype_df[['chr', 'end']].rename(columns={'end':'pos'})
+    else:
+        phenotype_df['start'] += 1
+        pos_df = phenotype_df[['chr', 'start', 'end']]
     phenotype_df.drop(['chr', 'start', 'end'], axis=1, inplace=True)
-    return phenotype_df, phenotype_pos_df
+
+    return phenotype_df, pos_df
