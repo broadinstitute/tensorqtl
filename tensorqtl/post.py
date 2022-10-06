@@ -34,32 +34,38 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
 
     logger.write('Computing q-values')
     logger.write(f'  * Number of phenotypes tested: {res_df.shape[0]}')
-    r = stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]
-    logger.write(f'  * Correlation between Beta-approximated and empirical p-values: {r:.4f}')
+
+    if not res_df['pval_beta'].isnull().all():
+        pval_col = 'pval_beta'
+        r = stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]
+        logger.write(f'  * Correlation between Beta-approximated and empirical p-values: {r:.4f}')
+    else:
+        pval_col = 'pval_perm'
+        logger.write(f'  * WARNING: no beta-approximated p-values found, using permutation p-values instead.')
 
     # calculate q-values
-    if qvalue_lambda is None:
-        qval, pi0 = rfunc.qvalue(res_df['pval_beta'])
-    else:
+    if qvalue_lambda is not None:
         logger.write(f'  * Calculating q-values with lambda = {qvalue_lambda:.3f}')
-        qval, pi0 = rfunc.qvalue(res_df['pval_beta'], qvalue_lambda)
+    qval, pi0 = rfunc.qvalue(res_df[pval_col], lambda_qvalue=qvalue_lambda)
+
     res_df['qval'] = qval
     logger.write(f'  * Proportion of significant phenotypes (1-pi0): {1-pi0:.2f}')
     logger.write(f"  * QTL phenotypes @ FDR {fdr:.2f}: {(res_df['qval'] <= fdr).sum()}")
 
     # determine global min(p) significance threshold and calculate nominal p-value threshold for each gene
-    lb = res_df.loc[res_df['qval'] <= fdr, 'pval_beta'].sort_values()
-    ub = res_df.loc[res_df['qval'] > fdr, 'pval_beta'].sort_values()
+    if pval_col == 'pval_beta':
+        lb = res_df.loc[res_df['qval'] <= fdr, 'pval_beta'].sort_values()
+        ub = res_df.loc[res_df['qval'] > fdr, 'pval_beta'].sort_values()
 
-    if lb.shape[0] > 0:  # significant phenotypes
-        lb = lb[-1]
-        if ub.shape[0] > 0:
-            ub = ub[0]
-            pthreshold = (lb+ub)/2
-        else:
-            pthreshold = lb
-        logger.write(f'  * min p-value threshold @ FDR {fdr}: {pthreshold:.6g}')
-        res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
+        if lb.shape[0] > 0:  # significant phenotypes
+            lb = lb[-1]
+            if ub.shape[0] > 0:
+                ub = ub[0]
+                pthreshold = (lb+ub)/2
+            else:
+                pthreshold = lb
+            logger.write(f'  * min p-value threshold @ FDR {fdr}: {pthreshold:.6g}')
+            res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
 
 
 def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_df=None,
@@ -123,7 +129,7 @@ def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_
     return afc_df
 
 
-def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, paired_covariate_df=None,
+def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df=None, paired_covariate_df=None,
                           interaction_s=None, compute_pi1=False, lambda_qvalue=None):
     """res_df: DataFrame with 'variant_id' column and phenotype IDs as index"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -140,14 +146,26 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df, pair
     af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
 
     phenotypes_t = torch.tensor(phenotype_df.loc[res_df.index].values, dtype=torch.float32).to(device)
-    residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
+
+
+    if covariates_df is not None:
+        residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
+        # dof -= covariates_df.shape[1]
+    else:
+        residualizer = None
 
     if interaction_s is None:
         if paired_covariate_df is None:
-            genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
-            phenotype_res_t = residualizer.transform(phenotypes_t)  # phenotypes x samples
-            dof = residualizer.dof
-            dof_t = dof
+            if residualizer is not None:
+                genotype_res_t = residualizer.transform(genotypes_t)  # variants x samples
+                phenotype_res_t = residualizer.transform(phenotypes_t)  # phenotypes x samples
+                dof = residualizer.dof
+                dof_t = dof
+            else:
+                genotype_res_t = genotypes_t
+                phenotype_res_t = phenotypes_t
+                dof =  phenotypes_t.shape[1] - 2
+                dof_t = dof
         else:
             genotype_res_t = torch.zeros_like(genotypes_t).to(device)
             phenotype_res_t = torch.zeros_like(phenotypes_t).to(device)
