@@ -244,7 +244,7 @@ def load_genotypes(genotype_path, select_samples=None, dosages=False):
         pr = PlinkReader(genotype_path, select_samples=select_samples, dtype=np.int8)
         genotype_df = pr.load_genotypes()
         variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
-    elif genotype_path.endswith('.bed.parquet') or genotype_path.endswith('.bed.gz'):
+    elif genotype_path.endswith(('.bed.parquet', '.bed.gz', '.bed')):
         genotype_df, variant_df = read_phenotype_bed(genotype_path)
         assert variant_df.columns[1] == 'pos', "The BED file must define a single position for each variant, with start + 1 == end."
         variant_df.columns = ['chrom', 'pos']
