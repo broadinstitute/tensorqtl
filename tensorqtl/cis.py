@@ -11,11 +11,6 @@ sys.path.insert(1, os.path.dirname(__file__))
 import genotypeio, eigenmt
 from core import *
 
-import imp
-import core
-imp.reload(core)
-from core import *
-imp.reload(eigenmt)
 
 def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None, return_af=True):
     """
@@ -443,16 +438,16 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
             if interaction_df is not None:
                 cols = ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']
                 if ni == 1:  # squeeze columns
-                    for k in cols:
-                        chr_res[k] = chr_res[k][:,0]
+                    for c in cols:
+                        chr_res[c] = chr_res[c][:,0]
                 else: # split interactions
                     for i in range(0, ni):  # fix order
-                        for k in cols:
-                            chr_res[k.replace('i', f"i{i+1}")] = None
-                    for k in cols:
+                        for c in cols:
+                            chr_res[c.replace('i', f"i{i+1}")] = None
+                    for c in cols:
                         for i in range(0, ni):
-                            chr_res[k.replace('i', f"i{i+1}")] = chr_res[k][:,i]
-                        del chr_res[k]
+                            chr_res[c.replace('i', f"i{i+1}")] = chr_res[c][:,i]
+                        del chr_res[c]
             chr_res_df = pd.DataFrame(chr_res)
             if interaction_df is None:
                 m = chr_res_df['pval_nominal'].notnull()
