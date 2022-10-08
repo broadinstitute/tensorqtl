@@ -589,7 +589,7 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         genotypes_t = genotypes_t[:,genotype_ix_t]
         impute_mean(genotypes_t)
 
-        variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
+        variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1].rename('variant_id')
 
         # filter monomorphic variants
         mask_t = ~(genotypes_t == genotypes_t[:, [0]]).all(1)

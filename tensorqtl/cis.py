@@ -169,6 +169,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
             logger.write(f'    * using {maf_threshold_interaction:.2f} MAF threshold')
     elif maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
+    logger.write(f'  * cis-window: ±{window:,}')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
@@ -592,6 +593,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
     if random_tiebreak:
         logger.write(f'  * randomly selecting top variant in case of ties')
+    logger.write(f'  * cis-window: ±{window:,}')
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
@@ -752,6 +754,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
     if random_tiebreak:
         logger.write(f'  * randomly selecting top variant in case of ties')
+    logger.write(f'  * cis-window: ±{window:,}')
     phenotype_df = phenotype_df.loc[ix]
     phenotype_pos_df = phenotype_pos_df.loc[ix]
 
