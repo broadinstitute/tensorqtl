@@ -368,7 +368,7 @@ def calculate_beta_approx_pval(r2_perm, r2_nominal, dof_init, tol=1e-4):
 #------------------------------------------------------------------------------
 
 def read_phenotype_bed(phenotype_bed):
-    """Load phenotype BED file as phenotype and TSS DataFrames"""
+    """Load phenotype BED file as phenotype and position DataFrames"""
     if phenotype_bed.endswith(('.bed.gz', '.bed')):
         phenotype_df = pd.read_csv(phenotype_bed, sep='\t', index_col=3, dtype={'#chr':str, '#Chr':str})
     elif phenotype_bed.endswith('.parquet'):

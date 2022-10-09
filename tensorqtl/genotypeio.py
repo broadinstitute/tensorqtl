@@ -380,8 +380,8 @@ class InputGeneratorCis(object):
       genotype_df:      genotype DataFrame (genotypes x samples)
       variant_df:       DataFrame mapping variant_id (index) to chrom, pos
       phenotype_df:     phenotype DataFrame (phenotypes x samples)
-      phenotype_pos_df: DataFrame defining position of each phenotype, with columns 'chr' and 'tss'
-      window:           cis-window (selects variants within +- cis-window from TSS)
+      phenotype_pos_df: DataFrame defining position of each phenotype, with columns ['chr', 'pos'] or ['chr', 'start', 'end']
+      window:           cis-window (selects variants within +- cis-window from 'pos' (e.g., TSS for gene-based features))
 
     Generates: phenotype array, genotype array (2D), cis-window indices, phenotype ID
     """
@@ -412,7 +412,7 @@ class InputGeneratorCis(object):
         self.group_s = None
         self.window = window
 
-        self.phenotype_tss = self.phenotype_pos_df['tss'].to_dict()
+        self.phenotype_pos = self.phenotype_pos_df['pos'].to_dict()
         # self.phenotype_start = None
         # self.phenotype_end = None
         self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
@@ -428,12 +428,12 @@ class InputGeneratorCis(object):
                 print(f'\r  * checking phenotypes: {k}/{self.phenotype_df.shape[0]}',
                       end='' if k != self.phenotype_df.shape[0] else None)
 
-            tss = self.phenotype_tss[phenotype_id]
+            pos = self.phenotype_pos[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
 
             m = len(self.chr_variant_dfs[chrom]['pos'].values)
-            lb = bisect.bisect_left(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
-            ub = bisect.bisect_right(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window)
+            lb = bisect.bisect_left(self.chr_variant_dfs[chrom]['pos'].values, pos - self.window)
+            ub = bisect.bisect_right(self.chr_variant_dfs[chrom]['pos'].values, pos + self.window)
             if lb != ub:
                 r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
             else:
@@ -448,7 +448,7 @@ class InputGeneratorCis(object):
                   self.phenotype_df.shape[0] - len(valid_ix)))
             self.phenotype_df = self.phenotype_df.loc[valid_ix]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
-            self.phenotype_tss = self.phenotype_pos_df['tss'].to_dict()
+            self.phenotype_pos = self.phenotype_pos_df['pos'].to_dict()
             self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
         self.n_phenotypes = self.phenotype_df.shape[0]
         if group_s is not None:

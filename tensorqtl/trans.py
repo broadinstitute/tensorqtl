@@ -13,10 +13,10 @@ import genotypeio
 from core import *
 
 
-def _in_cis(chrom, pos, gene_id, tss_dict, window=1000000):
+def _in_cis(chrom, pos, gene_id, pos_dict, window=1000000):
     """Test if a variant is within +/-window of a gene's TSS."""
-    if chrom == tss_dict[gene_id]['chr']:
-        tss = tss_dict[gene_id]['tss']
+    if chrom == pos_dict[gene_id]['chr']:
+        tss = pos_dict[gene_id]['pos']
         if pos >= tss - window and pos <= tss + window:
             return True
         else:
@@ -25,13 +25,13 @@ def _in_cis(chrom, pos, gene_id, tss_dict, window=1000000):
         return False
 
 
-def filter_cis(pairs_df, tss_dict, variant_df, window=5000000):
+def filter_cis(pairs_df, pos_dict, variant_df, window=5000000):
     """Filter out cis-QTLs
 
     Args:
         pairs_df: sparse output from map_trans()
-        tss_dict: gene_id->tss
-        window: filter variants within +/-window of TSS
+        pos_dict: phenotype_id -> pos
+        window: filter variants within +/-window of feature position (e.g., TSS for genes)
     """
     variant_df = variant_df.loc[pairs_df['variant_id'].unique()].copy()
     variant_dict = {}
@@ -40,7 +40,7 @@ def filter_cis(pairs_df, tss_dict, variant_df, window=5000000):
 
     drop_ix = []
     for k,gene_id,variant_id in zip(pairs_df['phenotype_id'].index, pairs_df['phenotype_id'], pairs_df['variant_id']):
-        if _in_cis(variant_dict[variant_id]['chrom'], variant_dict[variant_id]['pos'], gene_id, tss_dict, window=window):
+        if _in_cis(variant_dict[variant_id]['chrom'], variant_dict[variant_id]['pos'], gene_id, pos_dict, window=window):
             drop_ix.append(k)
     return pairs_df.drop(drop_ix)
 
