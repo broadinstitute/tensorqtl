@@ -392,10 +392,19 @@ class InputGeneratorCis(object):
         self.variant_df = variant_df.copy()
         self.variant_df['index'] = np.arange(variant_df.shape[0])
         self.n_samples = phenotype_df.shape[1]
-        self.phenotype_df = phenotype_df
-        self.phenotype_pos_df = phenotype_pos_df
+
+        # drop phenotypes without genotypes on same contig
+        variant_chrs = variant_df['chrom'].unique()
+        phenotype_chrs = phenotype_pos_df['chr'].unique()
+        self.chrs = [i for i in phenotype_chrs if i in variant_chrs]
+        m = phenotype_pos_df['chr'].isin(self.chrs)
+        if any(~m):
+            print(f'    ** dropping {sum(~m)} phenotypes on chrs. without genotypes')
+        self.phenotype_df = phenotype_df[m]
+        self.phenotype_pos_df = phenotype_pos_df[m]
+
         # check for constant phenotypes and drop
-        m = np.all(phenotype_df.values == phenotype_df.values[:,[0]], 1)
+        m = np.all(self.phenotype_df.values == self.phenotype_df.values[:,[0]], 1)
         if m.any():
             print(f'    ** dropping {np.sum(m)} constant phenotypes')
             self.phenotype_df = self.phenotype_df.loc[~m]
@@ -404,20 +413,20 @@ class InputGeneratorCis(object):
         self.window = window
 
         self.phenotype_tss = self.phenotype_pos_df['tss'].to_dict()
+        # self.phenotype_start = None
+        # self.phenotype_end = None
         self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
-        variant_chrs = variant_df['chrom'].unique()
-        phenotype_chrs = phenotype_pos_df['chr'].unique()
-        self.chrs = [i for i in phenotype_chrs if i in variant_chrs]
+
         self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
 
         # check phenotypes & calculate genotype ranges
         # get genotype indexes corresponding to cis-window of each phenotype
         valid_ix = []
         self.cis_ranges = {}
-        for k,phenotype_id in enumerate(self.phenotype_df.index,1):
-            if np.mod(k, 1000) == 0 or k == phenotype_df.shape[0]:
+        for k, phenotype_id in enumerate(self.phenotype_df.index, 1):
+            if np.mod(k, 1000) == 0 or k == self.phenotype_df.shape[0]:
                 print(f'\r  * checking phenotypes: {k}/{self.phenotype_df.shape[0]}',
-                      end='' if k != phenotype_df.shape[0] else None)
+                      end='' if k != self.phenotype_df.shape[0] else None)
 
             tss = self.phenotype_tss[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
