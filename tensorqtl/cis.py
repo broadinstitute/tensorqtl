@@ -415,7 +415,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     if interaction_df is not None:
                         ix = np.nanargmax(np.abs(tstat[:,1+ni:]).max(1))  # top association among all interactions tested
                         # index order: 0, 1, 1+ni, 2, 2+ni, 3, 3+ni, ...
-                        order = [0] + [i if j % 2 == 0 else i+ni for i in range(1,ni+1) for j in range(2)]
+                        order = [0] + [i if j % 2 == 0 else i+ni for i in range(1, ni+1) for j in range(2)]
                         top_s = [chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix],
                                  tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix]]
                         for i in order:
@@ -473,6 +473,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
     if interaction_df is not None and len(best_assoc) > 0:
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
         m = best_assoc['pval_g'].notnull()
+        m = m[m].index
         best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
         if ni == 1:
             best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
