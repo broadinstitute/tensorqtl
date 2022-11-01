@@ -378,6 +378,11 @@ def read_phenotype_bed(phenotype_bed):
         raise ValueError('Unsupported file type.')
     phenotype_df.rename(columns={i:i.lower().replace('#chr','chr') for i in phenotype_df.columns[:3]}, inplace=True)
 
+    # make sure BED file is properly sorted
+    assert pos_df.equals(
+        pos_df.groupby('chr', sort=False, group_keys=False).apply(lambda x: x.sort_values(['start', 'end']))
+    ), "Positions in BED file must be sorted."
+
     if (phenotype_df['start'] + 1 == phenotype_df['end']).all():
         pos_df = phenotype_df[['chr', 'end']].rename(columns={'end':'pos'})
     else:
