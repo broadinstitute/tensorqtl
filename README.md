@@ -49,7 +49,7 @@ Three inputs are required for QTL analyses with tensorQTL: genotypes, phenotypes
   Alternatively, the genotypes can be provided as a dataframe (genotypes x samples). 
 
 
-The [examples notebook](example/tensorqtl_examples.ipynb) below contains examples of all input files. The input formats for phenotypes and covariates are identical to those used by [FastQTL](http://fastqtl.sourceforge.net/).
+The [examples notebook](example/tensorqtl_examples.ipynb) below contains examples of all input files. The input formats for phenotypes and covariates are identical to those used by [FastQTL](https://github.com/francois-a/fastqtl).
 
 ### Examples
 For examples illustrating *cis*- and *trans*-QTL mapping, please see [tensorqtl_examples.ipynb](example/tensorqtl_examples.ipynb).
