@@ -70,6 +70,8 @@ def main():
         logger.write(f'  * reading covariates ({args.covariates})')
         covariates_df = pd.read_csv(args.covariates, sep='\t', index_col=0).T
         assert phenotype_df.columns.equals(covariates_df.index)
+    else:
+        covariates_df = None
     if args.interaction is not None:
         logger.write(f'  * reading interaction term(s) ({args.interaction})')
         # allow headerless input for single interactions
@@ -117,7 +119,7 @@ def main():
 
     if args.mode.startswith('cis'):
         if args.mode == 'cis':
-            res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
+            res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=covariates_df,
                                  group_s=group_s, nperm=args.permutations, window=args.window, beta_approx=not args.disable_beta_approx,
                                  maf_threshold=maf_threshold, warn_monomorphic=args.warn_monomorphic,
                                  logger=logger, seed=args.seed, verbose=True)
@@ -170,11 +172,17 @@ def main():
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
 
         elif args.mode == 'cis_susie':
-            signif_df = pd.read_parquet(args.cis_output)
+            if args.cis_output.endswith('.parquet'):
+                signif_df = pd.read_parquet(args.cis_output)
+            else:
+                signif_df = pd.read_csv(args.cis_output, sep='\t')
+            if 'qval' in signif_df:  # otherwise input is from get_significant_pairs
+                signif_df = signif_df[signif_df['qval'] <= args.fdr]
             ix = phenotype_df.index[phenotype_df.index.isin(signif_df['phenotype_id'].unique())]
             summary_df = susie.map(genotype_df, variant_df,
                                    phenotype_df.loc[ix], phenotype_pos_df.loc[ix],
-                                   covariates_df, max_iter=500, summary_only=True)
+                                   covariates_df, maf_threshold=maf_threshold,
+                                   max_iter=500, window=args.window, summary_only=True)
             summary_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.SuSiE_summary.parquet'))
 
     elif args.mode == 'trans':
@@ -190,7 +198,7 @@ def main():
             else:
                 interaction_df = interaction_df.squeeze('columns')
 
-        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=interaction_df,
+        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
                                   return_sparse=return_sparse, pval_threshold=pval_threshold,
                                   maf_threshold=maf_threshold, batch_size=args.batch_size,
                                   return_r2=args.return_r2, logger=logger)
