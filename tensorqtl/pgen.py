@@ -359,10 +359,29 @@ class PgenReader(object):
             self.sample_ids = sample_ids
             self.sample_idxs = sample_idxs
 
-    def get_range(self, region):
-        """Get variant indexes corresponding to region specified as 'chr:start-end'."""
-        chrom, pos = region.split(':')
-        start, end = [int(i) for i in pos.split('-')]
+    def get_range(self, region, start=None, end=None):
+        """
+        Get variant indexes corresponding to region specified as 'chr:start-end', or as chr, start, end.
+
+        Parameters
+        ----------
+        region : str
+            Genomic region, defined as 'chr:start-end' (1-based, inclusive), or chromosome.
+        start : int
+            Start position of the genomic interval (if chromosome is provided in fist argument).
+        end : int
+            End position of the genomic interval (if chromosome is provided in fist argument).
+
+        Returns
+        -------
+        indexes : ndarray
+            [start, end] indexes (inclusive)
+        """
+        if start is None and end is None:
+            chrom, pos = region.split(':')
+            start, end = [int(i) for i in pos.split('-')]
+        else:
+            chrom = region
         lb = bisect.bisect_left(self.variant_dfs[chrom]['pos'].values, start)
         ub = bisect.bisect_right(self.variant_dfs[chrom]['pos'].values, end)
         if lb != ub:
@@ -372,7 +391,7 @@ class PgenReader(object):
         return r
 
     def read(self, variant_id, impute_mean=True, dtype=np.float32):
-        """Read genotypes (as 0,1,2,-9; impute missing values to mean)."""
+        """Read genotypes for an individual variant as 0,1,2,-9; impute missing values (-9) to mean (default)."""
         variant_idx = self.variant_idx_dict[variant_id]
         genotypes = read(self.pgen_file, variant_idx, sample_subset=self.sample_idxs,
                          dtype=np.int8).astype(dtype)
@@ -380,12 +399,8 @@ class PgenReader(object):
             _impute_mean(genotypes)
         return pd.Series(genotypes, index=self.sample_ids, name=variant_id)
 
-    def read_dosages(self, variant_id, dtype=np.float32):
-        variant_idx = self.variant_idx_dict[variant_id]
-        dosages = read_dosages(self.pgen_file, variant_idx, sample_subset=self.sample_idxs, dtype=dtype)
-        return pd.Series(dosages, index=self.sample_ids, name=variant_id)
-
     def read_list(self, variant_ids, impute_mean=True, dtype=np.float32):
+        """Read genotypes for an list of variants as 0,1,2,-9; impute missing values (-9) to mean (default)."""
         variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
         genotypes = read_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs,
                               dtype=np.int8).astype(dtype)
@@ -393,39 +408,78 @@ class PgenReader(object):
             _impute_mean(genotypes)
         return pd.DataFrame(genotypes, index=variant_ids, columns=self.sample_ids)
 
-    def read_dosages_list(self, variant_ids, dtype=np.float32):
-        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
-        dosages = read_dosages_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs, dtype=dtype)
-        return pd.DataFrame(dosages, index=variant_ids, columns=self.sample_ids)
-
-    def read_alleles_list(self, variant_ids):
-        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
-        alleles = read_alleles_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs)
-        df1 = pd.DataFrame(alleles[:,::2], index=variant_ids, columns=self.sample_ids)
-        df2 = pd.DataFrame(alleles[:,1::2], index=variant_ids, columns=self.sample_ids)
-        return df1, df2
-
     def read_range(self, start_idx, end_idx, impute_mean=True, dtype=np.float32):
+        """Read genotypes for range of variants as 0,1,2,-9; impute missing values (-9) to mean (default)."""
         genotypes = read_range(self.pgen_file, start_idx, end_idx, sample_subset=self.sample_idxs,
                                dtype=np.int8).astype(dtype)
         if impute_mean:
             _impute_mean(genotypes)
         return pd.DataFrame(genotypes, index=self.variant_ids[start_idx:end_idx+1], columns=self.sample_ids)
 
-    def read_dosages_range(self, start_idx, end_idx, impute_mean=True, dtype=np.float32):
-        dosages = read_dosages_range(self.pgen_file, start_idx, end_idx, sample_subset=self.sample_idxs,
-                                     dtype=np.float32)
+    def read_region(self, region, start_pos=None, end_pos=None, impute_mean=True, dtype=np.float32):
+        """Read genotypes for variants in a genomic region as 0,1,2,-9; impute missing values (-9) to mean (default)."""
+        r = self.get_range(region, start_pos, end_pos)
+        if len(r) > 0:
+            return self.read_range(*r, impute_mean=impute_mean, dtype=dtype)
+
+    def read_dosages(self, variant_id, dtype=np.float32):
+        variant_idx = self.variant_idx_dict[variant_id]
+        dosages = read_dosages(self.pgen_file, variant_idx, sample_subset=self.sample_idxs, dtype=dtype)
+        return pd.Series(dosages, index=self.sample_ids, name=variant_id)
+
+    def read_dosages_list(self, variant_ids, dtype=np.float32):
+        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
+        dosages = read_dosages_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs, dtype=dtype)
+        return pd.DataFrame(dosages, index=variant_ids, columns=self.sample_ids)
+
+    def read_dosages_range(self, start_idx, end_idx, dtype=np.float32):
+        dosages = read_dosages_range(self.pgen_file, start_idx, end_idx, sample_subset=self.sample_idxs, dtype=dtype)
         return pd.DataFrame(dosages, index=self.variant_ids[start_idx:end_idx+1], columns=self.sample_ids)
+
+    def read_dosages_region(self, region, start_pos=None, end_pos=None, dtype=np.float32):
+        r = self.get_range(region, start_pos, end_pos)
+        if len(r) > 0:
+            return self.read_dosages_range(*r, dtype=dtype)
+
+    def read_alleles(self, variant_id):
+        variant_idx = self.variant_idx_dict[variant_id]
+        alleles = read_alleles(self.pgen_file, variant_idx, sample_subset=self.sample_idxs)
+        s1 = pd.Series(alleles[::2],  index=self.sample_ids, name=variant_id)
+        s2 = pd.Series(alleles[1::2], index=self.sample_ids, name=variant_id)
+        return s1, s2
+
+    def read_alleles_list(self, variant_ids):
+        variant_idxs = [self.variant_idx_dict[i] for i in variant_ids]
+        alleles = read_alleles_list(self.pgen_file, variant_idxs, sample_subset=self.sample_idxs)
+        df1 = pd.DataFrame(alleles[:,::2],  index=variant_ids, columns=self.sample_ids)
+        df2 = pd.DataFrame(alleles[:,1::2], index=variant_ids, columns=self.sample_ids)
+        return df1, df2
+
+    def read_alleles_range(self, start_idx, end_idx):
+        alleles = read_alleles_range(self.pgen_file, start_idx, end_idx, sample_subset=self.sample_idxs)
+        df1 = pd.DataFrame(alleles[:,::2],  index=self.variant_ids[start_idx:end_idx+1], columns=self.sample_ids)
+        df2 = pd.DataFrame(alleles[:,1::2], index=self.variant_ids[start_idx:end_idx+1], columns=self.sample_ids)
+        return df1, df2
+
+    def read_alleles_region(self, region, start_pos=None, end_pos=None):
+        r = self.get_range(region, start_pos, end_pos)
+        if len(r) > 0:
+            return self.read_alleles_range(*r)
+        else:
+            return None, None
 
     def load_genotypes(self):
         """Load all genotypes as np.int8, without imputing missing values."""
         genotypes = read_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
-        return pd.DataFrame(genotypes, index=self.pvar_df['id'], columns=self.sample_ids)
+        return pd.DataFrame(genotypes, index=self.variant_ids, columns=self.sample_ids)
 
     def load_dosages(self):
         """Load all dosages."""
-        dosages = read_dosages_range(self.pgen_file, 0, self.num_variants-1, sample_subset=self.sample_idxs)
-        return pd.DataFrame(dosages, index=self.pvar_df['id'], columns=self.sample_ids)
+        return self.read_dosages_range(0, self.num_variants-1)
+
+    def load_alleles(self):
+        """Load all alleles."""
+        return self.read_alleles_range(0, self.num_variants-1)
 
     def get_pairwise_ld(self, id1, id2, dtype=np.float32):
         """Compute pairwise LD (R2) between (lists of) variants"""
