@@ -452,15 +452,18 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
             chr_res_df = pd.DataFrame(chr_res)
             if interaction_df is None:
                 m = chr_res_df['pval_nominal'].notnull()
+                m = m[m].index
                 chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
             else:
                 if ni == 1:
                     m = chr_res_df['pval_gi'].notnull()
+                    m = m[m].index
                     chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
                     chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
                     chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
                 else:
                     m = chr_res_df['pval_gi1'].notnull()
+                    m = m[m].index
                     chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
                     for i in range(1, ni+1):
                         chr_res_df.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-chr_res_df.loc[m, f'pval_i{i}'].abs(), dof)
