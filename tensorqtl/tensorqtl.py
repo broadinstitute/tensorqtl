@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime
 import sys
 import os
+import pickle
 import argparse
 
 sys.path.insert(1, os.path.dirname(__file__))
@@ -179,11 +180,13 @@ def main():
             if 'qval' in signif_df:  # otherwise input is from get_significant_pairs
                 signif_df = signif_df[signif_df['qval'] <= args.fdr]
             ix = phenotype_df.index[phenotype_df.index.isin(signif_df['phenotype_id'].unique())]
-            summary_df = susie.map(genotype_df, variant_df,
+            summary_df, res = susie.map(genotype_df, variant_df,
                                    phenotype_df.loc[ix], phenotype_pos_df.loc[ix],
                                    covariates_df, maf_threshold=maf_threshold,
-                                   max_iter=500, window=args.window, summary_only=True)
+                                   max_iter=500, window=args.window, summary_only=False)
             summary_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.SuSiE_summary.parquet'))
+            with open(os.path.join(args.output_dir, f'{args.prefix}.SuSiE.pickle'), 'wb') as f:
+                pickle.dump(res, f)
 
     elif args.mode == 'trans':
         return_sparse = not args.return_dense
