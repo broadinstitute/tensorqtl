@@ -723,12 +723,15 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    assert np.all(phenotype_df.index==phenotype_pos_df.index)
-    assert np.all(covariates_df.index==phenotype_df.columns)
+    assert phenotype_df.index.equals(phenotype_pos_df.index)
+    assert covariates_df.index.equals(phenotype_df.columns)
     if logger is None:
         logger = SimpleLogger()
 
-    signif_df = cis_df[cis_df[fdr_col]<=fdr].copy()
+    signif_df = cis_df[cis_df[fdr_col] <= fdr].copy()
+    if len(signif_df) == 0:
+        raise ValueError(f"No significant phenotypes at FDR ≤ {fdr}.")
+
     cols = [
         'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df',
         'variant_id', 'tss_distance', 'ma_samples', 'ma_count', 'af',
