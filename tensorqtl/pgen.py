@@ -321,7 +321,10 @@ class PgenReader(object):
         select_samples: specify a subset of samples
         """
 
-        self.pvar_df = read_pvar(f"{plink_prefix_path}.pvar")
+        if os.path.exists(f"{plink_prefix_path}.pvar.parquet"):
+            self.pvar_df = pd.read_parquet(f"{plink_prefix_path}.pvar.parquet")
+        else:
+            self.pvar_df = read_pvar(f"{plink_prefix_path}.pvar")
         self.psam_df = read_psam(f"{plink_prefix_path}.psam")
         self.pgen_file = f"{plink_prefix_path}.pgen"
 
