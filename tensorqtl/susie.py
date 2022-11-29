@@ -546,10 +546,10 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
 
 
 def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
-        L=10, scaled_prior_variance=0.2, estimate_residual_variance=True,
-        estimate_prior_variance=True, tol=1e-3,
-        coverage=0.95, min_abs_corr=0.5, summary_only=True, maf_threshold=0,
-        max_iter=100, window=1000000, logger=None, verbose=True, warn_monomorphic=False):
+        paired_covariate_df=None, L=10, scaled_prior_variance=0.2, estimate_residual_variance=True,
+        estimate_prior_variance=True, tol=1e-3, coverage=0.95, min_abs_corr=0.5,
+        summary_only=True, maf_threshold=0, max_iter=100, window=1000000,
+        logger=None, verbose=True, warn_monomorphic=False):
     """
     SuSiE fine-mapping: computes SuSiE model for all phenotypes
     """
@@ -563,6 +563,11 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
     logger.write(f'  * {phenotype_df.shape[1]} samples')
     logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     logger.write(f'  * {covariates_df.shape[1]} covariates')
+    if paired_covariate_df is not None:
+        assert covariates_df is not None
+        assert paired_covariate_df.columns.equals(phenotype_df.columns), f"Paired covariate samples must match samples in phenotype matrix."
+        paired_covariate_df = paired_covariate_df.T  # samples x phenotypes
+        logger.write(f'  * including phenotype-specific covariate')
     logger.write(f'  * {variant_df.shape[0]} variants')
     logger.write(f'  * cis-window: ±{window:,}')
     if maf_threshold > 0:
@@ -608,9 +613,15 @@ def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
             logger.write(f'WARNING: skipping {phenotype_id} (no valid variants)')
             continue
 
+        if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
+            iresidualizer = residualizer
+        else:
+            iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
+                                                      dtype=torch.float32).to(device))
+
         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
-        genotypes_res_t = residualizer.transform(genotypes_t)  # variants x samples
-        phenotype_res_t = residualizer.transform(phenotype_t.reshape(1,-1))  # phenotypes x samples
+        genotypes_res_t = iresidualizer.transform(genotypes_t)  # variants x samples
+        phenotype_res_t = iresidualizer.transform(phenotype_t.reshape(1,-1))  # phenotypes x samples
 
         res = susie(genotypes_res_t.T, phenotype_res_t.T, L=L,
                     scaled_prior_variance=scaled_prior_variance,

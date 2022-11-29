@@ -580,7 +580,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         logger.write(f'  * {len(group_s.unique())} phenotype groups')
         group_dict = group_s.to_dict()
     if covariates_df is not None:
-        assert phenotype_df.columns.equals(covariates_df.index), 'Sample names in phenotype matrix columns and covariate matrix rows do not match!'
+        assert covariates_df.index.equals(phenotype_df.columns), 'Sample names in phenotype matrix columns and covariate matrix rows do not match!'
         assert ~(covariates_df.isnull().any().any()), f'Missing or null values in covariates matrix, in columns {",".join(covariates_df.columns[covariates_df.isnull().any(axis=0)].astype(str))}'
         logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
@@ -589,9 +589,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
         residualizer = None
         dof = phenotype_df.shape[1] - 2
     if paired_covariate_df is not None:
-        assert covariates_df is not None and paired_covariate_df.index.equals(covariates_df.index)
-        assert paired_covariate_df.columns.isin(phenotype_df.index).all()
-        logger.write(f'  * including phenotype-specific covariates')
+        assert covariates_df is not None
+        assert paired_covariate_df.index.isin(phenotype_df.index).all(), f"Paired covariate phenotypes must be present in phenotype matrix."
+        assert paired_covariate_df.columns.equals(phenotype_df.columns), f"Paired covariate samples must match samples in phenotype matrix."
+        paired_covariate_df = paired_covariate_df.T  # samples x phenotypes
+        logger.write(f'  * including phenotype-specific covariate')
     logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')

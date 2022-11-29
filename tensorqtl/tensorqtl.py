@@ -21,6 +21,7 @@ def main():
     parser.add_argument('prefix', help='Prefix for output file names')
     parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'cis_susie', 'trans'], help='Mapping mode. Default: cis')
     parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
+    parser.add_argument('--paired_covariate', default=None, help='Single phenotype-specific covariate. Tab-delimited file, phenotypes x samples')
     parser.add_argument('--permutations', type=int, default=10000, help='Number of permutations. Default: 10000')
     parser.add_argument('--interaction', default=None, type=str, help='Interaction term(s)')
     parser.add_argument('--cis_output', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
@@ -67,12 +68,22 @@ def main():
     assert phenotype_pos_df.columns[1] == 'pos', "The BED file must define the TSS/cis-window center, with start+1 == end."
     phenotype_pos_df.columns = ['chr', 'pos']
     pos_dict = phenotype_pos_df.T.to_dict()
+
     if args.covariates is not None:
         logger.write(f'  * reading covariates ({args.covariates})')
         covariates_df = pd.read_csv(args.covariates, sep='\t', index_col=0).T
         assert phenotype_df.columns.equals(covariates_df.index)
     else:
         covariates_df = None
+
+    if args.paired_covariate is not None:
+        assert covariates_df is not None, f"Covariates matrix must be provided when using paired covariate"
+        paired_covariate_df = pd.read_csv(args.paired_covariate, sep='\t', index_col=0)  # phenotypes x samples
+        assert paired_covariate_df.index.isin(phenotype_df.index).all(), f"Paired covariate phenotypes must be present in phenotype matrix."
+        assert paired_covariate_df.columns.equals(phenotype_df.columns), f"Paired covariate samples must match samples in phenotype matrix."
+    else:
+        paired_covariate_df = None
+
     if args.interaction is not None:
         logger.write(f'  * reading interaction term(s) ({args.interaction})')
         # allow headerless input for single interactions
@@ -114,6 +125,7 @@ def main():
 
     # load genotypes
     if not args.load_split or args.mode != 'cis_nominal':  # load all genotypes into memory
+        logger.write(f'  * loading genotype dosages' if args.dosages else f'  * loading genotypes')
         genotype_df, variant_df = genotypeio.load_genotypes(args.genotype_path, select_samples=phenotype_df.columns, dosages=args.dosages)
         if variant_df is None:
             assert not args.mode.startswith('cis'), f"Genotype data without variant positions is only supported for mode='trans'."
@@ -121,9 +133,9 @@ def main():
     if args.mode.startswith('cis'):
         if args.mode == 'cis':
             res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=covariates_df,
-                                 group_s=group_s, nperm=args.permutations, window=args.window, beta_approx=not args.disable_beta_approx,
-                                 maf_threshold=maf_threshold, warn_monomorphic=args.warn_monomorphic,
-                                 logger=logger, seed=args.seed, verbose=True)
+                                 group_s=group_s, paired_covariate_df=paired_covariate_df, nperm=args.permutations,
+                                 window=args.window, beta_approx=not args.disable_beta_approx, maf_threshold=maf_threshold,
+                                 warn_monomorphic=args.warn_monomorphic, logger=logger, seed=args.seed, verbose=True)
             logger.write('  * writing output')
             if has_rpy2:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda, logger=logger)
@@ -180,10 +192,9 @@ def main():
             if 'qval' in signif_df:  # otherwise input is from get_significant_pairs
                 signif_df = signif_df[signif_df['qval'] <= args.fdr]
             ix = phenotype_df.index[phenotype_df.index.isin(signif_df['phenotype_id'].unique())]
-            summary_df, res = susie.map(genotype_df, variant_df,
-                                   phenotype_df.loc[ix], phenotype_pos_df.loc[ix],
-                                   covariates_df, maf_threshold=maf_threshold,
-                                   max_iter=500, window=args.window, summary_only=False)
+            summary_df, res = susie.map(genotype_df, variant_df, phenotype_df.loc[ix], phenotype_pos_df.loc[ix],
+                                        covariates_df, paired_covariate_df=paired_covariate_df, maf_threshold=maf_threshold,
+                                        max_iter=500, window=args.window, summary_only=False)
             summary_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.SuSiE_summary.parquet'))
             with open(os.path.join(args.output_dir, f'{args.prefix}.SuSiE.pickle'), 'wb') as f:
                 pickle.dump(res, f)
