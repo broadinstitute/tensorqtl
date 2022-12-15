@@ -382,10 +382,15 @@ class PgenReader(object):
             [start, end] indexes (inclusive)
         """
         if start is None and end is None:
-            chrom, pos = region.split(':')
-            start, end = [int(i) for i in pos.split('-')]
-        else:
+            if ':' in region:
+                chrom, pos = region.split(':')
+                start, end = [int(i) for i in pos.split('-')]
+            else:  # full chromosome selected
+                chrom = region
+                return self.variant_dfs[chrom]['index'].values[[0, -1]]
+        else:  # input is chr, start, end
             chrom = region
+
         lb = bisect.bisect_left(self.variant_dfs[chrom]['pos'].values, start)
         ub = bisect.bisect_right(self.variant_dfs[chrom]['pos'].values, end)
         if lb != ub:

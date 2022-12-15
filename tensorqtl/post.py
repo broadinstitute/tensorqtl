@@ -326,6 +326,7 @@ def get_significant_pairs(res_df, nominal_files, group_s=None, fdr=0.05):
     for k,c in enumerate(chroms, 1):
         print(f'  * processing chr. {k}/{len(chroms)}', end='\r', flush=True)
         nominal_df = pd.read_parquet(nominal_files[c])
+        # drop pairs that never pass threshold
         nominal_df = nominal_df[nominal_df['pval_nominal'] <= df['pval_nominal_threshold'].max()]
         if group_s is not None:
             nominal_df.insert(1, 'group_id', nominal_df['phenotype_id'].map(group_s))
