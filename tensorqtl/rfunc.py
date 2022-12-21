@@ -2,7 +2,7 @@
 import numpy as np
 import rpy2
 from rpy2.robjects.packages import importr
-from collections import Iterable
+from collections.abc import Iterable
 from contextlib import contextmanager
 
 # silence R warnings
