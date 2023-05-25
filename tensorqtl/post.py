@@ -266,7 +266,7 @@ def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
     with open(annotation_gtf) as gtf:
         for row in gtf:
             row = row.strip().split('\t')
-            if row[0][0]=='#' or row[2]!='gene': continue
+            if row[0][0] == '#' or row[2] != 'gene': continue
             # get gene_id and gene_name from attributes
             attr = dict([i.split() for i in row[8].replace('"','').split(';') if i!=''])
             # gene_name, gene_chr, gene_start, gene_end, strand
@@ -282,10 +282,14 @@ def annotate_genes(gene_df, annotation_gtf, lookup_df=None):
                                  columns=['gene_name', 'gene_chr', 'gene_start', 'gene_end', 'strand'],
                                  index=gene_df.index)
     gene_df = pd.concat([gene_info, gene_df], axis=1)
-    assert np.all(gene_df.index==gene_info.index)
+    assert np.all(gene_df.index == gene_info.index)
 
     col_order = ['gene_name', 'gene_chr', 'gene_start', 'gene_end', 'strand',
-        'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df', 'variant_id', 'tss_distance']
+        'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df', 'variant_id']
+    if 'tss_distance' in gene_df:
+        col_order += ['tss_distance']
+    else:
+        col_order += ['start_distance', 'end_distance']
     if lookup_df is not None:
         print('  * adding variant annotations from lookup table', flush=True)
         gene_df = gene_df.join(lookup_df, on='variant_id')  # add variant information

@@ -190,12 +190,14 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         else:
             # TODO: implement filtering for multiple interactions?
             interaction_mask_t = None
+        col_order = ['phenotype_id', 'variant_id', 'start_distance']
+        if 'pos' not in phenotype_pos_df:
+            col_order += ['end_distance']
+        col_order += ['af', 'ma_samples', 'ma_count', 'pval_g', 'b_g', 'b_g_se']
         if ni == 1:
-            col_order = ['phenotype_id', 'variant_id', 'tss_distance', 'af', 'ma_samples', 'ma_count', 'pval_g', 'b_g', 'b_g_se',
-                         'pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']
+            col_order += ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']
         else:
-            col_order = (['phenotype_id', 'variant_id', 'tss_distance', 'af', 'ma_samples', 'ma_count', 'pval_g', 'b_g', 'b_g_se'] +
-                         [k.replace('i', f"i{i+1}") for i in range(0,ni) for k in ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']])
+            col_order += [k.replace('i', f"i{i+1}") for i in range(0,ni) for k in ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']]
 
         # use column names instead of numbered interaction variables in output files
         var_dict = []
@@ -228,7 +230,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         chr_res = OrderedDict()
         chr_res['phenotype_id'] = []
         chr_res['variant_id'] = []
-        chr_res['tss_distance'] = np.empty(n, dtype=np.int32)
+        chr_res['start_distance'] = np.empty(n, dtype=np.int32)
+        if 'pos' not in phenotype_pos_df:
+            chr_res['end_distance'] = np.empty(n, dtype=np.int32)
         chr_res['af'] =           np.empty(n, dtype=np.float32)
         chr_res['ma_samples'] =   np.empty(n, dtype=np.int32)
         chr_res['ma_count'] =     np.empty(n, dtype=np.int32)
@@ -257,7 +261,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 impute_mean(genotypes_t)
 
                 variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
-                tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_pos[phenotype_id])
+                start_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_start[phenotype_id])
+                if 'pos' not in phenotype_pos_df:
+                    end_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_end[phenotype_id])
 
                 if maf_threshold > 0:
                     maf_t = calculate_maf(genotypes_t)
@@ -265,7 +271,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     genotypes_t = genotypes_t[mask_t]
                     mask = mask_t.cpu().numpy().astype(bool)
                     variant_ids = variant_ids[mask]
-                    tss_distance = tss_distance[mask]
+                    start_distance = start_distance[mask]
+                    if 'pos' not in phenotype_pos_df:
+                        end_distance = end_distance[mask]
 
                 if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
                     iresidualizer = residualizer
@@ -287,14 +295,19 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                                                             residualizer=iresidualizer, return_sparse=False,
                                                             variant_ids=variant_ids)
                         tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
-                        tss_distance = tss_distance[mask]
+                        start_distance = start_distance[mask]
+                        if 'pos' not in phenotype_pos_df:
+                            end_distance = end_distance[mask]
                         n = len(variant_ids)
 
                         # top association
                         ix = np.nanargmax(np.abs(tstat[:,1+ni:]).max(1))  # top association among all interactions tested
                         # index order: 0, 1, 1+ni, 2, 2+ni, 3, 3+ni, ...
                         order = [0] + [i if j % 2 == 0 else i+ni for i in range(1,ni+1) for j in range(2)]
-                        top_s = [phenotype_id, variant_ids[ix], tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix]]
+                        top_s = [phenotype_id, variant_ids[ix], start_distance[ix]]
+                        if 'pos' not in phenotype_pos_df:
+                            top_s += [end_distance[ix]]
+                        top_s += [af[ix], ma_samples[ix], ma_count[ix]]
                         for i in order:
                             top_s += [tstat[ix,i], b[ix,i], b_se[ix,i]]
                         top_s = pd.Series(top_s, index=col_order)
@@ -307,7 +320,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 if n > 0:
                     chr_res['phenotype_id'].extend([phenotype_id]*n)
                     chr_res['variant_id'].extend(variant_ids)
-                    chr_res['tss_distance'][start:start+n] = tss_distance
+                    chr_res['start_distance'][start:start+n] = start_distance
+                    if 'pos' not in phenotype_pos_df:
+                        chr_res['end_distance'][start:start+n] = end_distance
                     chr_res['af'][start:start+n] = af
                     chr_res['ma_samples'][start:start+n] = ma_samples
                     chr_res['ma_count'][start:start+n] = ma_count
@@ -338,7 +353,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
                 variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
                 # assuming that the TSS for all grouped phenotypes is the same
-                tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_pos[phenotype_ids[0]])
+                start_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_start[phenotype_ids[0]])
+                if 'pos' not in phenotype_pos_df:
+                    end_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_end[phenotype_ids[0]])
 
                 if maf_threshold > 0:
                     maf_t = calculate_maf(genotypes_t)
@@ -346,7 +363,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     genotypes_t = genotypes_t[mask_t]
                     mask = mask_t.cpu().numpy().astype(bool)
                     variant_ids = variant_ids[mask]
-                    tss_distance = tss_distance[mask]
+                    start_distance = start_distance[mask]
+                    if 'pos' not in phenotype_pos_df:
+                        end_distance = end_distance[mask]
 
                 if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
                     iresidualizer = residualizer
@@ -359,7 +378,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                                                                  maf_threshold_interaction=maf_threshold_interaction)
                     mask = mask_t.cpu().numpy()
                     variant_ids = variant_ids[mask]
-                    tss_distance = tss_distance[mask]
+                    start_distance = start_distance[mask]
+                    if 'pos' not in phenotype_pos_df:
+                        end_distance = end_distance[mask]
 
                 n = len(variant_ids)
 
@@ -410,7 +431,9 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
                     chr_res['phenotype_id'].extend(px)
                     chr_res['variant_id'].extend(variant_ids)
-                    chr_res['tss_distance'][start:start+n] = tss_distance
+                    chr_res['start_distance'][start:start+n] = start_distance
+                    if 'pos' not in phenotype_pos_df:
+                        chr_res['end_distance'][start:start+n] = end_distance
                     chr_res['af'][start:start+n] = af
                     chr_res['ma_samples'][start:start+n] = ma_samples
                     chr_res['ma_count'][start:start+n] = ma_count
@@ -434,8 +457,10 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         ix = np.nanargmax(np.abs(tstat[:,1+ni:]).max(1))  # top association among all interactions tested
                         # index order: 0, 1, 1+ni, 2, 2+ni, 3, 3+ni, ...
                         order = [0] + [i if j % 2 == 0 else i+ni for i in range(1, ni+1) for j in range(2)]
-                        top_s = [chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix],
-                                 tss_distance[ix], af[ix], ma_samples[ix], ma_count[ix]]
+                        top_s = [chr_res['phenotype_id'][start:start+n][ix], variant_ids[ix], start_distance[ix]]
+                        if 'pos' not in phenotype_pos_df:
+                            top_s += [end_distance[ix]]
+                        top_s += [af[ix], ma_samples[ix], ma_count[ix]]
                         for i in order:
                             top_s += [tstat[ix,i], b[ix,i], b_se[ix,i]]
                         top_s = pd.Series(top_s, index=col_order)
@@ -535,7 +560,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
     logger.write('done.')
 
 
-def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=10000):
+def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, start_distance, end_distance, phenotype_id, nperm=10000):
     """Return nominal p-value, allele frequencies, etc. as pd.Series"""
     r2_nominal = r_nominal*r_nominal
     pval_perm = (np.sum(r2_perm>=r2_nominal)+1) / (nperm+1)
@@ -560,7 +585,8 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
         ('true_df', np.NaN),
         ('pval_true_df', np.NaN),
         ('variant_id', variant_id),
-        ('tss_distance', tss_distance),
+        ('start_distance', start_distance),
+        ('end_distance', end_distance),
         ('ma_samples', ma_samples),
         ('ma_count', ma_count),
         ('af', af),
@@ -573,7 +599,7 @@ def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_i
     return res_s
 
 
-def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000, beta_approx=True):
+def _process_group_permutations(buf, variant_df, start_pos, end_pos, dof, group_id, nperm=10000, beta_approx=True):
     """
     Merge results for grouped phenotypes
 
@@ -587,8 +613,9 @@ def _process_group_permutations(buf, variant_df, tss, dof, group_id, nperm=10000
     r2_perm = np.max([b[3] for b in buf], 0)
     # return r_nominal, std_ratio, var_ix, r2_perm, g, num_var, phenotype_id
     variant_id = variant_df.index[var_ix]
-    tss_distance = variant_df['pos'].values[var_ix] - tss
-    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+    start_distance = variant_df['pos'].values[var_ix] - start_pos
+    end_distance = variant_df['pos'].values[var_ix] - end_pos
+    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, start_distance, end_distance, phenotype_id, nperm=nperm)
     if beta_approx:
         res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof*0.25)
     res_s['group_id'] = group_id
@@ -691,8 +718,10 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
             r_nominal, std_ratio, var_ix, r2_perm, g = [i.cpu().numpy() for i in res]
             var_ix = genotype_range[var_ix]
             variant_id = variant_df.index[var_ix]
-            tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_pos[phenotype_id]
-            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes_t.shape[0], idof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+            start_distance = variant_df['pos'].values[var_ix] - igc.phenotype_start[phenotype_id]
+            end_distance = variant_df['pos'].values[var_ix] - igc.phenotype_end[phenotype_id]
+            res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes_t.shape[0], idof, variant_id,
+                                       start_distance, end_distance, phenotype_id, nperm=nperm)
             if beta_approx:
                 res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, idof)
             res_df.append(res_s)
@@ -738,7 +767,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
                 res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                 res[2] = genotype_range[res[2]]
                 buf.append(res + [genotypes_t.shape[0], phenotype_id])
-            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_pos[phenotype_ids[0]], idof,
+            res_s = _process_group_permutations(buf, variant_df, igc.phenotype_start[phenotype_ids[0]],
+                                                igc.phenotype_end[phenotype_ids[0]], idof,
                                                 group_id, nperm=nperm, beta_approx=beta_approx)
             res_df.append(res_s)
 
@@ -768,11 +798,9 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     if len(signif_df) == 0:
         raise ValueError(f"No significant phenotypes at FDR ≤ {fdr}.")
 
-    cols = [
-        'num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df',
-        'variant_id', 'tss_distance', 'ma_samples', 'ma_count', 'af',
-        'pval_nominal', 'slope', 'slope_se', 'pval_perm', 'pval_beta',
-    ]
+    cols = ['num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df', 'variant_id',
+            'start_distance', 'end_distance', 'ma_samples', 'ma_count', 'af',
+            'pval_nominal', 'slope', 'slope_se', 'pval_perm', 'pval_beta']
     if group_s is not None:
         cols += ['group_id', 'group_size']
     signif_df = signif_df[cols]
@@ -858,8 +886,10 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 if x[0] <= signif_threshold:
                     var_ix = genotype_range[var_ix]
                     variant_id = variant_df.index[var_ix]
-                    tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_pos[phenotype_id]
-                    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes.shape[0], dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                    start_distance = variant_df['pos'].values[var_ix] - igc.phenotype_start[phenotype_id]
+                    end_distance = variant_df['pos'].values[var_ix] - igc.phenotype_end[phenotype_id]
+                    res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes.shape[0], dof, variant_id,
+                                               start_distance, end_distance, phenotype_id, nperm=nperm)
                     res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = x
                     forward_df.append(res_s)
                 else:
@@ -886,8 +916,10 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     variant_id = variant_df.index[var_ix]
                     x = calculate_beta_approx_pval(r2_perm, r_nominal*r_nominal, dof)
                     if x[0] <= signif_threshold and variant_id not in variant_set:
-                        tss_distance = variant_df['pos'].values[var_ix] - igc.phenotype_pos[phenotype_id]
-                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes.shape[0], dof, variant_id, tss_distance, phenotype_id, nperm=nperm)
+                        start_distance = variant_df['pos'].values[var_ix] - igc.phenotype_start[phenotype_id]
+                        end_distance = variant_df['pos'].values[var_ix] - igc.phenotype_end[phenotype_id]
+                        res_s = prepare_cis_output(r_nominal, r2_perm, std_ratio, g, genotypes.shape[0], dof, variant_id,
+                                                   start_distance, end_distance, phenotype_id, nperm=nperm)
                         res_s[['pval_beta', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df']] = x
                         res_s['rank'] = k
                         back_df.append(res_s)
@@ -936,7 +968,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                     res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                     res[2] = genotype_range[res[2]]
                     buf.append(res + [genotypes.shape[0], phenotype_id])
-                res_s = _process_group_permutations(buf, variant_df, igc.phenotype_pos[phenotype_ids[0]], dof, group_id, nperm=nperm)
+                res_s = _process_group_permutations(buf, variant_df, igc.phenotype_start[phenotype_ids[0]],
+                                                    igc.phenotype_end[phenotype_ids[0]], dof, group_id, nperm=nperm)
 
                 # add to list if significant
                 if res_s['pval_beta'] <= signif_threshold:
@@ -967,7 +1000,8 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                         res = [i.cpu().numpy() for i in res]  # r_nominal, std_ratio, var_ix, r2_perm, g
                         res[2] = genotype_range[res[2]]
                         buf.append(res + [genotypes.shape[0], phenotype_id])
-                    res_s = _process_group_permutations(buf, variant_df, igc.phenotype_pos[phenotype_ids[0]], dof, group_id, nperm=nperm)
+                    res_s = _process_group_permutations(buf, variant_df, igc.phenotype_start[phenotype_ids[0]],
+                                                        igc.phenotype_end[phenotype_ids[0]], dof, group_id, nperm=nperm)
 
                     if res_s['pval_beta'] <= signif_threshold and variant_id not in variant_set:
                         res_s['rank'] = k

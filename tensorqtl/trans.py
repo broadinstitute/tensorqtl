@@ -16,8 +16,14 @@ from core import *
 def _in_cis(chrom, pos, gene_id, pos_dict, window=1000000):
     """Test if a variant is within +/-window of a gene's TSS."""
     if chrom == pos_dict[gene_id]['chr']:
-        tss = pos_dict[gene_id]['pos']
-        if pos >= tss - window and pos <= tss + window:
+        gene_dict = pos_dict[gene_id]
+        if 'pos' in gene_dict:
+            start = gene_dict['pos']
+            end = start
+        else:
+            start = gene_dict['start']
+            end = gene_dict['end']
+        if pos >= start - window and pos <= end + window:
             return True
         else:
             return False
@@ -25,7 +31,7 @@ def _in_cis(chrom, pos, gene_id, pos_dict, window=1000000):
         return False
 
 
-def filter_cis(pairs_df, pos_dict, variant_df, window=5000000):
+def filter_cis(pairs_df, phenotype_pos_df, variant_df, window=5000000):
     """Filter out cis-QTLs
 
     Args:
@@ -33,6 +39,7 @@ def filter_cis(pairs_df, pos_dict, variant_df, window=5000000):
         pos_dict: phenotype_id -> pos
         window: filter variants within +/-window of feature position (e.g., TSS for genes)
     """
+    pos_dict = phenotype_pos_df.T.to_dict()
     variant_df = variant_df.loc[pairs_df['variant_id'].unique()].copy()
     variant_dict = {}
     for variant_id, chrom, pos in zip(variant_df.index, variant_df['chrom'], variant_df['pos']):

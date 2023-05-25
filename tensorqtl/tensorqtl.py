@@ -64,10 +64,10 @@ def main():
     # load inputs
     logger.write(f'  * reading phenotypes ({args.phenotype_bed})')
     phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotype_bed)
-    # make sure TSS/cis-window is properly defined -- TODO: change to allow [start-w, end+w] windows
-    assert phenotype_pos_df.columns[1] == 'pos', "The BED file must define the TSS/cis-window center, with start+1 == end."
-    phenotype_pos_df.columns = ['chr', 'pos']
-    pos_dict = phenotype_pos_df.T.to_dict()
+    if phenotype_pos_df.columns[1] == 'pos':
+        logger.write(f"  * cis-window detected as position ± {args.window:,}")
+    else:
+        logger.write(f"  * cis-window detected as [start - {args.window:,}, end + {args.window:,}]")
 
     if args.covariates is not None:
         logger.write(f'  * reading covariates ({args.covariates})')
@@ -220,7 +220,7 @@ def main():
 
         if variant_df is not None:
             logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
-            pairs_df = trans.filter_cis(pairs_df, pos_dict, variant_df, window=5000000)
+            pairs_df = trans.filter_cis(pairs_df, phenotype_pos_df, variant_df, window=5000000)
 
         logger.write('  * writing output')
         if not args.output_text:
