@@ -98,17 +98,17 @@ def compute_tests(genotypes_t, var_thresh=0.99, variant_window=200):
         shrunk_precision_t = torch.zeros(shrunk_cov_t.shape).to(device)
         shrunk_precision_t.view(-1)[ix] = shrunk_cov_t.view(-1)[ix].pow(-0.5)
         shrunk_cor_t = torch.matmul(torch.matmul(shrunk_precision_t, shrunk_cov_t), shrunk_precision_t)
-        eigenvalues_t,_ = torch.symeig(shrunk_cor_t, eigenvectors=False)  # will be deprecated
-        # eigenvalues_t = torch.linalg.eigvalsh(shrunk_cor_t)  # ~2x slower than symeig with 1.10.0+cu102
+        # eigenvalues_t,_ = torch.symeig(shrunk_cor_t, eigenvectors=False)  # will be deprecated
+        eigenvalues_t = torch.linalg.eigvalsh(shrunk_cor_t)  # ~2x slower than symeig with 1.10.0+cu102 and 2.0.1+cu118
 
     # last window
     shrunk_cov0_t, shrinkage0_t = lw_shrink(windows[-1].t())
     shrunk_precision0_t = torch.diag(torch.diag(shrunk_cov0_t).pow(-0.5))
     shrunk_cor0_t = torch.mm(torch.mm(shrunk_precision0_t, shrunk_cov0_t), shrunk_precision0_t)
-    eigenvalues0_t,_ = torch.symeig(shrunk_cor0_t, eigenvectors=False)
-    # eigenvalues0_t = torch.linalg.eigvalsh(shrunk_cor0_t)
+    # eigenvalues0_t,_ = torch.symeig(shrunk_cor0_t, eigenvectors=False)
+    eigenvalues0_t = torch.linalg.eigvalsh(shrunk_cor0_t)
 
-    if len(windows)>1:
+    if len(windows) > 1:
         eigenvalues = list(eigenvalues_t.cpu().numpy())
         eigenvalues.append(eigenvalues0_t.cpu().numpy())
     else:
@@ -180,4 +180,4 @@ def padjust_bh(p):
     i = np.arange(n,0,-1)
     o = np.argsort(p)[::-1]
     ro = np.argsort(o)
-    return np.minimum(1, np.minimum.accumulate(np.float(n)/i * np.array(p)[o]))[ro]
+    return np.minimum(1, np.minimum.accumulate(np.float64(n)/i * np.array(p)[o]))[ro]
