@@ -130,7 +130,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
 
 
 def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
-                covariates_df=None, maf_threshold=0, interaction_df=None, maf_threshold_interaction=0.05,
+                covariates_df=None, paired_covariate_df=None, maf_threshold=0, interaction_df=None, maf_threshold_interaction=0.05,
                 group_s=None, window=1000000, run_eigenmt=False,
                 output_dir='.', write_top=True, write_stats=True, logger=None, verbose=True):
     """
@@ -154,13 +154,19 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
     logger.write(f'  * {phenotype_df.shape[1]} samples')
     logger.write(f'  * {phenotype_df.shape[0]} phenotypes')
     if covariates_df is not None:
-        assert np.all(phenotype_df.columns==covariates_df.index)
+        assert np.all(phenotype_df.columns == covariates_df.index)
         logger.write(f'  * {covariates_df.shape[1]} covariates')
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))
         dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
     else:
         residualizer = None
         dof = phenotype_df.shape[1] - 2
+    if paired_covariate_df is not None:
+        assert covariates_df is not None
+        assert paired_covariate_df.index.isin(phenotype_df.index).all(), f"Paired covariate phenotypes must be present in phenotype matrix."
+        assert paired_covariate_df.columns.equals(phenotype_df.columns), f"Paired covariate samples must match samples in phenotype matrix."
+        paired_covariate_df = paired_covariate_df.T  # samples x phenotypes
+        logger.write(f'  * including phenotype-specific covariate')
     logger.write(f'  * {variant_df.shape[0]} variants')
     if interaction_df is not None:
         assert interaction_df.index.equals(phenotype_df.columns)
@@ -261,8 +267,14 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     variant_ids = variant_ids[mask]
                     tss_distance = tss_distance[mask]
 
+                if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
+                    iresidualizer = residualizer
+                else:
+                    iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
+                                                              dtype=torch.float32).to(device))
+
                 if interaction_df is None:
-                    res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
+                    res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=iresidualizer)
                     tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     n = len(variant_ids)
                 else:
@@ -272,7 +284,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                         mask = mask_t.cpu().numpy()
                         variant_ids = variant_ids[mask]
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
-                                                            residualizer=residualizer, return_sparse=False,
+                                                            residualizer=iresidualizer, return_sparse=False,
                                                             variant_ids=variant_ids)
                         tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         tss_distance = tss_distance[mask]
@@ -336,6 +348,12 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     variant_ids = variant_ids[mask]
                     tss_distance = tss_distance[mask]
 
+                if paired_covariate_df is None or phenotype_id not in paired_covariate_df:
+                    iresidualizer = residualizer
+                else:
+                    iresidualizer = Residualizer(torch.tensor(np.c_[covariates_df, paired_covariate_df[phenotype_id]],
+                                                              dtype=torch.float32).to(device))
+
                 if interaction_df is not None:
                     genotypes_t, mask_t = filter_maf_interaction(genotypes_t, interaction_mask_t=interaction_mask_t,
                                                                  maf_threshold_interaction=maf_threshold_interaction)
@@ -351,11 +369,11 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     phenotype_t = torch.tensor(phenotypes[0], dtype=torch.float).to(device)
 
                     if interaction_df is None:
-                        res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
+                        res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=iresidualizer)
                         tstat, slope, slope_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     else:
                         res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
-                                                            residualizer=residualizer, return_sparse=False,
+                                                            residualizer=iresidualizer, return_sparse=False,
                                                             variant_ids=variant_ids)
                         tstat, b, b_se, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                     px = [phenotype_id]*n
@@ -364,11 +382,11 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                     for phenotype, phenotype_id in zip(phenotypes[1:], phenotype_ids[1:]):
                         phenotype_t = torch.tensor(phenotype, dtype=torch.float).to(device)
                         if interaction_df is None:
-                            res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=residualizer)
+                            res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=iresidualizer)
                             tstat0, slope0, slope_se0, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
                         else:
                             res = calculate_interaction_nominal(genotypes_t, phenotype_t.unsqueeze(0), interaction_t,
-                                                                residualizer=residualizer, return_sparse=False,
+                                                                residualizer=iresidualizer, return_sparse=False,
                                                                 variant_ids=variant_ids)
                             tstat0, b0, b_se0, af, ma_samples, ma_count = [i.cpu().numpy() for i in res]
 
@@ -435,7 +453,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
             for x in chr_res:
                 chr_res[x] = chr_res[x][:start]
 
-        if write_stats:
+        if write_stats:  # write full summary stats for current chromosome
             if interaction_df is not None:
                 cols = ['pval_i', 'b_i', 'b_i_se', 'pval_gi', 'b_gi', 'b_gi_se']
                 if ni == 1:  # squeeze columns
@@ -450,24 +468,36 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                             chr_res[c.replace('i', f"i{i+1}")] = chr_res[c][:,i]
                         del chr_res[c]
             chr_res_df = pd.DataFrame(chr_res)
+
+            if paired_covariate_df is not None:
+                idof = dof - chr_res_df['phenotype_id'].isin(paired_covariate_df.columns).astype(int).values
+            else:
+                idof = dof
+
             if interaction_df is None:
                 m = chr_res_df['pval_nominal'].notnull()
                 m = m[m].index
-                chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
+                if paired_covariate_df is not None:
+                    idof = idof[m]
+                chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), idof)
             else:
                 if ni == 1:
                     m = chr_res_df['pval_gi'].notnull()
                     m = m[m].index
-                    chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
-                    chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), dof)
-                    chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), dof)
+                    if paired_covariate_df is not None:
+                        idof = idof[m]
+                    chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), idof)
+                    chr_res_df.loc[m, 'pval_i'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_i'].abs(), idof)
+                    chr_res_df.loc[m, 'pval_gi'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_gi'].abs(), idof)
                 else:
                     m = chr_res_df['pval_gi1'].notnull()
                     m = m[m].index
-                    chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), dof)
+                    if paired_covariate_df is not None:
+                        idof = idof[m]
+                    chr_res_df.loc[m, 'pval_g'] =  2*stats.t.cdf(-chr_res_df.loc[m, 'pval_g'].abs(), idof)
                     for i in range(1, ni+1):
-                        chr_res_df.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-chr_res_df.loc[m, f'pval_i{i}'].abs(), dof)
-                        chr_res_df.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-chr_res_df.loc[m, f'pval_gi{i}'].abs(), dof)
+                        chr_res_df.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-chr_res_df.loc[m, f'pval_i{i}'].abs(), idof)
+                        chr_res_df.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-chr_res_df.loc[m, f'pval_gi{i}'].abs(), idof)
                     # substitute column headers
                     chr_res_df.rename(columns=var_dict, inplace=True)
             print('    * writing output')
@@ -477,14 +507,18 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
         m = best_assoc['pval_g'].notnull()
         m = m[m].index
-        best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), dof)
+        if paired_covariate_df is not None:
+            idof = dof - best_assoc.index.isin(paired_covariate_df.columns).astype(int).values[m]
+        else:
+            idof = dof
+        best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), idof)
         if ni == 1:
-            best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), dof)
-            best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), dof)
+            best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), idof)
+            best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), idof)
         else:
             for i in range(1, ni+1):
-                best_assoc.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-best_assoc.loc[m, f'pval_i{i}'].abs(), dof)
-                best_assoc.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-best_assoc.loc[m, f'pval_gi{i}'].abs(), dof)
+                best_assoc.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-best_assoc.loc[m, f'pval_i{i}'].abs(), idof)
+                best_assoc.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-best_assoc.loc[m, f'pval_gi{i}'].abs(), idof)
         if run_eigenmt and ni == 1:  # leave correction of specific p-values up to user for now (TODO)
             if group_s is None:
                 best_assoc['pval_emt'] = np.minimum(best_assoc['tests_emt']*best_assoc['pval_gi'], 1)

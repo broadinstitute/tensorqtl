@@ -144,7 +144,8 @@ def main():
         elif args.mode == 'cis_nominal':
             if not args.load_split:
                 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, args.prefix, covariates_df=covariates_df,
-                                interaction_df=interaction_df, maf_threshold_interaction=args.maf_threshold_interaction,
+                                paired_covariate_df=paired_covariate_df, interaction_df=interaction_df,
+                                maf_threshold_interaction=args.maf_threshold_interaction,
                                 group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
                                 output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
                 # compute significant pairs
@@ -164,7 +165,7 @@ def main():
                     variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
                     chr_df = cis.map_nominal(genotype_df, variant_df[variant_df['chrom'] == chrom],
                                              phenotype_df[phenotype_pos_df['chr'] == chrom], phenotype_pos_df[phenotype_pos_df['chr'] == chrom],
-                                             args.prefix, covariates_df=covariates_df,
+                                             args.prefix, covariates_df=covariates_df, paired_covariate_df=paired_covariate_df,
                                              interaction_df=interaction_df, maf_threshold_interaction=args.maf_threshold_interaction,
                                              group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
                                              output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
