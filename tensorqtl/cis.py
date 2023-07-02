@@ -563,7 +563,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 def prepare_cis_output(r_nominal, r2_perm, std_ratio, g, num_var, dof, variant_id, start_distance, end_distance, phenotype_id, nperm=10000):
     """Return nominal p-value, allele frequencies, etc. as pd.Series"""
     r2_nominal = r_nominal*r_nominal
-    pval_perm = (np.sum(r2_perm>=r2_nominal)+1) / (nperm+1)
+    pval_perm = (np.sum(r2_perm >= r2_nominal)+1) / (nperm+1)
 
     slope = r_nominal * std_ratio
     tstat2 = dof * r2_nominal / (1 - r2_nominal)
@@ -945,7 +945,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 genotype_range = genotype_range[mask]
 
             # 1) forward pass
-            forward_df = [signif_df[signif_df['group_id']==group_id].iloc[0]]  # initialize results with top variant
+            forward_df = [signif_df[signif_df['group_id'] == group_id].iloc[0]]  # initialize results with top variant
             covariates = covariates_df.values.copy()  # initialize covariates
             dosage_dict = {}
             while True:

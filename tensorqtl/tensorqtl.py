@@ -125,7 +125,7 @@ def main():
         group_s = None
 
     # load genotypes
-    if args.chunk_size is None or args.mode not in ['cis', 'cis_nominal']:  # load all genotypes into memory
+    if args.chunk_size is None or not args.mode.startswith('cis'):  # load all genotypes into memory
         logger.write(f'  * loading genotype dosages' if args.dosages else f'  * loading genotypes')
         genotype_df, variant_df = genotypeio.load_genotypes(args.genotype_path, select_samples=phenotype_df.columns, dosages=args.dosages)
         if variant_df is None:
@@ -176,19 +176,20 @@ def main():
                 chunks = []
                 for gt_df, var_df, p_df, p_pos_df, ci in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
                                                                                            dosages=args.dosages, verbose=True):
-                    if args.chunk_size == 'chr':
-                        prefix = args.prefix
-                    else:
-                        prefix = f"{args.prefix}.chunk{ci+1}"
+                    prefix = f"{args.prefix}.chunk{ci+1}"
                     chunks.append(prefix)
                     cis.map_nominal(gt_df, var_df, p_df, p_pos_df, prefix, covariates_df=covariates_df,
                                     paired_covariate_df=paired_covariate_df, interaction_df=interaction_df,
                                     maf_threshold_interaction=args.maf_threshold_interaction,
                                     group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
                                     output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
-                # concatenate outputs by chromosome
-                if args.chunk_size != 'chr':
-                    chunk_files = glob.glob(os.path.join(args.output_dir, f"{args.prefix}.chunk*.cis_qtl_pairs.*.parquet"))
+                chunk_files = glob.glob(os.path.join(args.output_dir, f"{args.prefix}.chunk*.cis_qtl_pairs.*.parquet"))
+                if args.chunk_size == 'chr':  # remove redundant chunk ID from file names
+                    for f in chunk_files:
+                        x = re.findall(f"{args.prefix}\.(chunk\d+)", os.path.basename(f))
+                        assert len(x) == 1
+                        os.rename(f, f.replace(f"{x[0]}.", ""))
+                else:  # concatenate outputs by chromosome
                     chunk_df = pd.DataFrame({
                         'file': chunk_files,
                         'chunk': [int(re.findall(f"{args.prefix}\.chunk(\d+)", os.path.basename(i))[0]) for i in chunk_files],
@@ -196,23 +197,33 @@ def main():
                     }).sort_values('chunk')
                     for chrom, chr_df in chunk_df.groupby('chr', sort=False):
                         print(f"\rConcatenating outputs for {chrom}", end='' if chrom != chunk_df['chr'].iloc[-1] else None)
-                        pd.concat([pd.read_parquet(f) for f in chr_df['file']]).to_parquet(
+                        pd.concat([pd.read_parquet(f) for f in chr_df['file']]).reset_index(drop=True).to_parquet(
                             os.path.join(args.output_dir, f"{args.prefix}.cis_qtl_pairs.{chrom}.parquet"))
                         for f in chr_df['file']:
                             os.remove(f)
-
-                # TODO
-                # if interaction_df is not None:
-                #     top_df = pd.concat(top_df)
-                #     top_df.to_csv(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl_top_assoc.txt.gz'),
-                #                   sep='\t', float_format='%.6g')
+                # concatenate interaction results
+                if interaction_df is not None:
+                    chunk_files = [os.path.join(args.output_dir, f"{c}.cis_qtl_top_assoc.txt.gz") for c in chunks]
+                    pd.concat([pd.read_csv(f, sep='\t', index_col=0, dtype=str) for f in chunk_files]).to_csv(
+                        os.path.join(args.output_dir, f"{args.prefix}.cis_qtl_top_assoc.txt.gz"), sep='\t')
+                    for f in chunk_files:
+                        os.remove(f)
 
         elif args.mode == 'cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
             summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
-            res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
-                                         group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
-                                         maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
+            if args.chunk_size is None:
+                res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
+                                             group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
+                                             maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
+            else:
+                res_df = []
+                for gt_df, var_df, p_df, p_pos_df, _ in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
+                                                                                          dosages=args.dosages, verbose=True):
+                    res_df.append(cis.map_independent(gt_df, var_df, summary_df, p_df, p_pos_df, covariates_df,
+                                                      group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
+                                                      maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True))
+                res_df = pd.concat(res_df).reset_index(drop=True)
             logger.write('  * writing output')
             out_file = os.path.join(args.output_dir, f'{args.prefix}.cis_independent_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
@@ -224,10 +235,25 @@ def main():
                 signif_df = pd.read_csv(args.cis_output, sep='\t')
             if 'qval' in signif_df:  # otherwise input is from get_significant_pairs
                 signif_df = signif_df[signif_df['qval'] <= args.fdr]
-            ix = phenotype_df.index[phenotype_df.index.isin(signif_df['phenotype_id'].unique())]
-            summary_df, res = susie.map(genotype_df, variant_df, phenotype_df.loc[ix], phenotype_pos_df.loc[ix],
-                                        covariates_df, paired_covariate_df=paired_covariate_df, maf_threshold=maf_threshold,
-                                        max_iter=500, window=args.window, summary_only=False)
+            phenotype_ids = phenotype_df.index[phenotype_df.index.isin(signif_df['phenotype_id'].unique())]
+            phenotype_df = phenotype_df.loc[phenotype_ids]
+            phenotype_pos_df = phenotype_pos_df.loc[phenotype_ids]
+            if args.chunk_size is None:
+                summary_df, res = susie.map(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
+                                            covariates_df, paired_covariate_df=paired_covariate_df, maf_threshold=maf_threshold,
+                                            max_iter=500, window=args.window, summary_only=False)
+            else:
+                summary_df = []
+                res = {}
+                for gt_df, var_df, p_df, p_pos_df, _ in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
+                                                                                          dosages=args.dosages, verbose=True):
+                    chunk_summary_df, chunk_res = susie.map(gt_df, var_df, p_df, p_pos_df,
+                                                            covariates_df, paired_covariate_df=paired_covariate_df, maf_threshold=maf_threshold,
+                                                            max_iter=500, window=args.window, summary_only=False)
+                    summary_df.append(chunk_summary_df)
+                    res |= chunk_res
+                summary_df = pd.concat(summary_df).reset_index(drop=True)
+
             summary_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.SuSiE_summary.parquet'))
             with open(os.path.join(args.output_dir, f'{args.prefix}.SuSiE.pickle'), 'wb') as f:
                 pickle.dump(res, f)

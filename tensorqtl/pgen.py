@@ -338,6 +338,7 @@ class PgenReader(object):
 
         variant_df = self.pvar_df.set_index('id')[['chrom', 'pos']]
         variant_df['index'] = np.arange(variant_df.shape[0])
+        self.variant_df = variant_df
         self.variant_dfs = {c:g[['pos', 'index']] for c,g in variant_df.groupby('chrom', sort=False)}
 
     def set_samples(self, sample_ids=None, sort=True):
