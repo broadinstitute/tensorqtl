@@ -37,8 +37,8 @@ def coloc(genotypes1_t, genotypes2_t, phenotype1_t, phenotype2_t,
         r_nominal_t = r_nominal_t.squeeze()
         var_ratio_t = phenotype_var_t.reshape(1,-1) / genotype_var_t.reshape(-1,1)
     else:
-        r_nominal_t = calculate_corr(genotypes1_t, phenotype1_t.reshape(1,-1),
-                                     residualizer1, return_var=False).squeeze()
+        r_nominal_t = calculate_corr(
+            genotypes1_t, phenotype1_t.reshape(1,-1), residualizer1, return_var=False).squeeze()
     r2_nominal_t = r_nominal_t.double().pow(2)
 
     if residualizer1 is not None:

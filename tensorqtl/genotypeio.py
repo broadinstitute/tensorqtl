@@ -24,9 +24,9 @@ gt_to_dosage_dict = {'0/0':0, '0/1':1, '1/1':2, './.':np.NaN,
 
 
 def _check_dependency(name):
-    e = subprocess.call('which '+name, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if e!=0:
-        raise RuntimeError('External dependency \''+name+'\' not installed')
+    e = subprocess.call(f"which {name}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if e != 0:
+        raise RuntimeError(f"External dependency '{name}' not installed")
 
 
 def print_progress(k, n, entity):
@@ -86,16 +86,16 @@ def get_sample_ids(vcfpath):
     """Get sample IDs from VCF"""
     with _get_vcf_opener(vcfpath) as vcf:
         for header in vcf:
-            if header[:2]=='##': continue
+            if header[:2] == '##': continue
             break
     return header.strip().split('\t')[9:]
 
 
 def parse_genotypes(x, field='GT'):
     """Convert list of genotypes (str) to np.float32"""
-    if field=='GT':
+    if field == 'GT':
         g = np.float32([gt_to_dosage_dict[i] for i in x])
-    elif field=='DS':
+    elif field == 'DS':
         g = np.float32(x)
     return g
 
@@ -231,7 +231,7 @@ def load_genotypes(genotype_path, select_samples=None, dosages=False):
     """Load all genotypes into a dataframe"""
     if all([os.path.exists(f"{genotype_path}.{ext}") for ext in ['pgen', 'psam', 'pvar']]):
         if pgen is None:
-            raise ImportError('pgenlib must be installed to use PLINK 2 pgen/psam/pvar files.')
+            raise ImportError('Pgenlib must be installed to use PLINK 2 pgen/psam/pvar files.')
         pgr = pgen.PgenReader(genotype_path, select_samples=select_samples)
         variant_df = pgr.pvar_df.set_index('id')[['chrom', 'pos']]
         if dosages:
@@ -372,6 +372,43 @@ class GenotypeGeneratorTrans(object):
             yield g, ix
 
 
+def get_cis_ranges(phenotype_pos_df, chr_variant_dfs, window, verbose=True):
+    """
+
+    start, end indexes (inclusive)
+    """
+    # check phenotypes & calculate genotype ranges
+    # get genotype indexes corresponding to cis-window of each phenotype
+    if 'pos' in phenotype_pos_df:
+        phenotype_pos_df = phenotype_pos_df.rename(columns={'pos':'start'})
+        phenotype_pos_df['end'] = phenotype_pos_df['start']
+    phenotype_pos_dict = phenotype_pos_df.to_dict(orient='index')
+
+    drop_ids = []
+    cis_ranges = {}
+    n = len(phenotype_pos_df)
+    for k, phenotype_id in enumerate(phenotype_pos_df.index, 1):
+        if verbose and (k % 1000 == 0 or k == n):
+            print(f'\r  * checking phenotypes: {k}/{n}',  end='' if k != n else None)
+
+        pos = phenotype_pos_dict[phenotype_id]
+        chrom = pos['chr']
+        m = len(chr_variant_dfs[chrom]['pos'].values)
+        lb = bisect.bisect_left(chr_variant_dfs[chrom]['pos'].values, pos['start'] - window)
+        ub = bisect.bisect_right(chr_variant_dfs[chrom]['pos'].values, pos['end'] + window)
+        if lb != ub:
+            r = chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
+        else:
+            r = []
+
+        if len(r) > 0:
+            cis_ranges[phenotype_id] = r
+        else:
+            drop_ids.append(phenotype_id)
+
+    return cis_ranges, drop_ids
+
+
 class InputGeneratorCis(object):
     """
     Input generator for cis-mapping
@@ -413,51 +450,23 @@ class InputGeneratorCis(object):
         self.group_s = None
         self.window = window
 
+        self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
+
+        # check phenotypes & calculate genotype ranges
+        # get genotype indexes corresponding to cis-window of each phenotype
+        self.cis_ranges, drop_ids = get_cis_ranges(self.phenotype_pos_df, self.chr_variant_dfs, self.window)
+        if len(drop_ids) > 0:
+            print(f"    ** dropping {len(drop_ids)} phenotypes without variants in cis-window")
+            self.phenotype_df = self.phenotype_df.drop(drop_ids)
+            self.phenotype_pos_df = self.phenotype_pos_df.drop(drop_ids)
         if 'pos' in self.phenotype_pos_df:
             self.phenotype_start = self.phenotype_pos_df['pos'].to_dict()
             self.phenotype_end = self.phenotype_start
         else:
             self.phenotype_start = self.phenotype_pos_df['start'].to_dict()
             self.phenotype_end = self.phenotype_pos_df['end'].to_dict()
-        self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
-
-        self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
-
-        # check phenotypes & calculate genotype ranges
-        # get genotype indexes corresponding to cis-window of each phenotype
-        valid_ix = []
-        self.cis_ranges = {}
-        for k, phenotype_id in enumerate(self.phenotype_df.index, 1):
-            if np.mod(k, 1000) == 0 or k == self.phenotype_df.shape[0]:
-                print(f'\r  * checking phenotypes: {k}/{self.phenotype_df.shape[0]}',
-                      end='' if k != self.phenotype_df.shape[0] else None)
-
-            chrom = self.phenotype_chr[phenotype_id]
-            m = len(self.chr_variant_dfs[chrom]['pos'].values)
-            lb = bisect.bisect_left(self.chr_variant_dfs[chrom]['pos'].values, self.phenotype_start[phenotype_id] - self.window)
-            ub = bisect.bisect_right(self.chr_variant_dfs[chrom]['pos'].values, self.phenotype_end[phenotype_id] + self.window)
-            if lb != ub:
-                r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
-            else:
-                r = []
-
-            if len(r) > 0:
-                valid_ix.append(phenotype_id)
-                self.cis_ranges[phenotype_id] = r
-
-        if len(valid_ix) != self.phenotype_df.shape[0]:
-            print('    ** dropping {} phenotypes without variants in cis-window'.format(
-                  self.phenotype_df.shape[0] - len(valid_ix)))
-            self.phenotype_df = self.phenotype_df.loc[valid_ix]
-            self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
-            if 'pos' in self.phenotype_pos_df:
-                self.phenotype_start = self.phenotype_pos_df['pos'].to_dict()
-                self.phenotype_end = self.phenotype_start
-            else:
-                self.phenotype_start = self.phenotype_pos_df['start'].to_dict()
-                self.phenotype_end = self.phenotype_pos_df['end'].to_dict()
-            self.phenotype_chr = self.phenotype_pos_df['chr'].to_dict()
         self.n_phenotypes = self.phenotype_df.shape[0]
+
         if group_s is not None:
             self.group_s = group_s.loc[self.phenotype_df.index].copy()
             self.n_groups = self.group_s.unique().shape[0]
@@ -503,3 +512,58 @@ class InputGeneratorCis(object):
                 p = self.phenotype_df.values[[index_dict[i] for i in group_phenotype_ids]]
                 r = self.cis_ranges[g.index[0]]
                 yield p, self.genotype_df.values[r[0]:r[-1]+1], np.arange(r[0],r[-1]+1), group_phenotype_ids, group_id
+
+
+def get_chunk_size(memory_gb, samples):
+    """"""
+    return memory_gb * 1024**3 // samples
+
+
+def generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, chunk_size, window=1000000,
+                           dosages=False, verbose=True):
+    """
+    Generate paired genotype-phenotype chunks for large datasets where only a subset of
+    genotypes can be loaded into memory.
+
+    pgr: pgen.PgenReader
+    phenotype_df:     phenotype DataFrame (phenotypes x samples)
+    phenotype_pos_df: DataFrame defining position of each phenotype, with columns ['chr', 'pos'] or ['chr', 'start', 'end']
+    chunk_size: maximum number of variants to load into CPU memory
+    window: cis-window
+    dosages: load dosages (DS) from genotype files (default: GT)
+    """
+    variant_df = pgr.pvar_df.set_index('id')[['chrom', 'pos']]
+    cis_ranges, _ = get_cis_ranges(phenotype_pos_df, pgr.variant_dfs, window)
+    range_df = pd.DataFrame(cis_ranges, index=['start', 'end']).T
+    range_df = range_df.join(phenotype_pos_df['chr'])
+
+    if chunk_size == 'chr':
+        chrlen_s = range_df['chr'].value_counts(sort=False)
+        start_ixs = [0] + chrlen_s.cumsum().tolist()
+    else:
+        chunk_size = int(chunk_size)
+        # check chunk size
+        max_cis_var = (range_df['end'] - range_df['start'] + 1).max()
+        if not max_cis_var <= chunk_size:
+            raise ValueError(f"Max. chunk size must be at least largest cis-window ({max_cis_var})")
+
+        start_ixs = [0]
+        while start_ixs[-1] < range_df.shape[0]:
+            end_ix = bisect.bisect_left(range_df['end'].values, range_df['start'].values[start_ixs[-1]] + chunk_size)
+            start_ixs.append(end_ix)
+        start_ixs[-1] = range_df.shape[0]
+
+    nchunks = len(start_ixs) - 1
+    for ci in range(nchunks):
+        if verbose:
+            print(f"Processing genotype-phenotype chunk {ci+1}/{nchunks}")
+        ix = slice(start_ixs[ci], start_ixs[ci+1])
+        chunk_df = range_df[ix]
+        if chunk_size == 'chr':
+            assert (chunk_df['chr'] == chrlen_s.index[ci]).all()
+        if dosages:
+            gt_df = pgr.read_dosages_range(chunk_df['start'].values[0], chunk_df['end'].values[-1], dtype=np.float32)
+        else:
+            gt_df = pgr.read_range(chunk_df['start'].values[0], chunk_df['end'].values[-1], impute_mean=False, dtype=np.int8)
+        var_df = variant_df.iloc[chunk_df['start'].values[0]:chunk_df['end'].values[-1]+1]
+        yield gt_df, var_df, phenotype_df[ix], phenotype_pos_df[ix], ci

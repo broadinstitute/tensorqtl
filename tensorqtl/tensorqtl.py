@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime
 import sys
 import os
+import re
 import pickle
 import argparse
 
@@ -35,8 +36,8 @@ def main():
     parser.add_argument('--return_r2', action='store_true', help='Return r2 (only for sparse trans-QTL output)')
     parser.add_argument('--best_only', action='store_true', help='Only write lead association for each phenotype (interaction mode only)')
     parser.add_argument('--output_text', action='store_true', help='Write output in txt.gz format instead of parquet (trans-QTL mode only)')
-    parser.add_argument('--batch_size', type=int, default=20000, help='Batch size. Reduce this if encountering OOM errors.')
-    parser.add_argument('--load_split', action='store_true', help='Load genotypes into memory separately for each chromosome.')
+    parser.add_argument('--batch_size', type=int, default=20000, help='GPU batch size (trans-QTLs only). Reduce this if encountering OOM errors.')
+    parser.add_argument('--chunk_size', default=None, help="For cis-QTL mapping, load genotypes into CPU memory in chunks of chunk_size variants, or by chromosome if chunk_size is 'chr'.")
     parser.add_argument('--disable_beta_approx', action='store_true', help='Disable Beta-distribution approximation of empirical p-values (not recommended).')
     parser.add_argument('--warn_monomorphic', action='store_true', help='Warn if monomorphic variants are found.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
@@ -124,25 +125,41 @@ def main():
         group_s = None
 
     # load genotypes
-    if not args.load_split or args.mode != 'cis_nominal':  # load all genotypes into memory
+    if args.chunk_size is None or args.mode not in ['cis', 'cis_nominal']:  # load all genotypes into memory
         logger.write(f'  * loading genotype dosages' if args.dosages else f'  * loading genotypes')
         genotype_df, variant_df = genotypeio.load_genotypes(args.genotype_path, select_samples=phenotype_df.columns, dosages=args.dosages)
         if variant_df is None:
             assert not args.mode.startswith('cis'), f"Genotype data without variant positions is only supported for mode='trans'."
+    else:
+        if not all([os.path.exists(f"{args.genotype_path}.{ext}") for ext in ['pgen', 'psam', 'pvar']]):
+            raise ValueError("Processing in chunks requires PLINK 2 pgen/psam/pvar files.")
+        import pgen
+        pgr = pgen.PgenReader(args.genotype_path, select_samples=phenotype_df.columns)
 
     if args.mode.startswith('cis'):
         if args.mode == 'cis':
-            res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=covariates_df,
-                                 group_s=group_s, paired_covariate_df=paired_covariate_df, nperm=args.permutations,
-                                 window=args.window, beta_approx=not args.disable_beta_approx, maf_threshold=maf_threshold,
-                                 warn_monomorphic=args.warn_monomorphic, logger=logger, seed=args.seed, verbose=True)
+            if args.chunk_size is None:
+                res_df = cis.map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df=covariates_df,
+                                     group_s=group_s, paired_covariate_df=paired_covariate_df, nperm=args.permutations,
+                                     window=args.window, beta_approx=not args.disable_beta_approx, maf_threshold=maf_threshold,
+                                     warn_monomorphic=args.warn_monomorphic, logger=logger, seed=args.seed, verbose=True)
+            else:
+                res_df = []
+                for gt_df, var_df, p_df, p_pos_df, _ in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
+                                                                                       dosages=args.dosages, verbose=True):
+                    res_df.append(cis.map_cis(gt_df, var_df, p_df, p_pos_df, covariates_df=covariates_df,
+                                              group_s=group_s, paired_covariate_df=paired_covariate_df, nperm=args.permutations,
+                                              window=args.window, beta_approx=not args.disable_beta_approx, maf_threshold=maf_threshold,
+                                              warn_monomorphic=args.warn_monomorphic, logger=logger, seed=args.seed, verbose=True))
+                res_df = pd.concat(res_df)
             logger.write('  * writing output')
             if has_rpy2:
                 calculate_qvalues(res_df, fdr=args.fdr, qvalue_lambda=args.qvalue_lambda, logger=logger)
             out_file = os.path.join(args.output_dir, f'{args.prefix}.cis_qtl.txt.gz')
             res_df.to_csv(out_file, sep='\t', float_format='%.6g')
+
         elif args.mode == 'cis_nominal':
-            if not args.load_split:
+            if args.chunk_size is None:
                 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, args.prefix, covariates_df=covariates_df,
                                 paired_covariate_df=paired_covariate_df, interaction_df=interaction_df,
                                 maf_threshold_interaction=args.maf_threshold_interaction,
@@ -155,25 +172,40 @@ def main():
                     signif_df = get_significant_pairs(cis_df, nominal_prefix, group_s=group_s, fdr=args.fdr)
                     signif_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl.signif_pairs.parquet'))
 
-            else:  # load genotypes for each chromosome separately
-                # currently only supports PLINK1.9 inputs, TODO
-                pr = genotypeio.PlinkReader(args.genotype_path, select_samples=phenotype_df.columns, dtype=np.int8)
-                top_df = []
-                for chrom in pr.chrs:
-                    g, pos_s = pr.get_region(chrom)
-                    genotype_df = pd.DataFrame(g, index=pos_s.index, columns=pr.fam['iid'])[phenotype_df.columns]
-                    variant_df = pr.bim.set_index('snp')[['chrom', 'pos']]
-                    chr_df = cis.map_nominal(genotype_df, variant_df[variant_df['chrom'] == chrom],
-                                             phenotype_df[phenotype_pos_df['chr'] == chrom], phenotype_pos_df[phenotype_pos_df['chr'] == chrom],
-                                             args.prefix, covariates_df=covariates_df, paired_covariate_df=paired_covariate_df,
-                                             interaction_df=interaction_df, maf_threshold_interaction=args.maf_threshold_interaction,
-                                             group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
-                                             output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
-                    top_df.append(chr_df)
-                if interaction_df is not None:
-                    top_df = pd.concat(top_df)
-                    top_df.to_csv(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl_top_assoc.txt.gz'),
-                                  sep='\t', float_format='%.6g')
+            else:
+                chunks = []
+                for gt_df, var_df, p_df, p_pos_df, ci in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
+                                                                                           dosages=args.dosages, verbose=True):
+                    if args.chunk_size == 'chr':
+                        prefix = args.prefix
+                    else:
+                        prefix = f"{args.prefix}.chunk{ci+1}"
+                    chunks.append(prefix)
+                    cis.map_nominal(gt_df, var_df, p_df, p_pos_df, prefix, covariates_df=covariates_df,
+                                    paired_covariate_df=paired_covariate_df, interaction_df=interaction_df,
+                                    maf_threshold_interaction=args.maf_threshold_interaction,
+                                    group_s=None, window=args.window, maf_threshold=maf_threshold, run_eigenmt=True,
+                                    output_dir=args.output_dir, write_top=True, write_stats=not args.best_only, logger=logger, verbose=True)
+                # concatenate outputs by chromosome
+                if args.chunk_size != 'chr':
+                    chunk_files = glob.glob(os.path.join(args.output_dir, f"{args.prefix}.chunk*.cis_qtl_pairs.*.parquet"))
+                    chunk_df = pd.DataFrame({
+                        'file': chunk_files,
+                        'chunk': [int(re.findall(f"{args.prefix}\.chunk(\d+)", os.path.basename(i))[0]) for i in chunk_files],
+                        'chr': [re.findall("\.cis_qtl_pairs\.(.*)\.parquet", os.path.basename(i))[0] for i in chunk_files],
+                    }).sort_values('chunk')
+                    for chrom, chr_df in chunk_df.groupby('chr', sort=False):
+                        print(f"\rConcatenating outputs for {chrom}", end='' if chrom != chunk_df['chr'].iloc[-1] else None)
+                        pd.concat([pd.read_parquet(f) for f in chr_df['file']]).to_parquet(
+                            os.path.join(args.output_dir, f"{args.prefix}.cis_qtl_pairs.{chrom}.parquet"))
+                        for f in chr_df['file']:
+                            os.remove(f)
+
+                # TODO
+                # if interaction_df is not None:
+                #     top_df = pd.concat(top_df)
+                #     top_df.to_csv(os.path.join(args.output_dir, f'{args.prefix}.cis_qtl_top_assoc.txt.gz'),
+                #                   sep='\t', float_format='%.6g')
 
         elif args.mode == 'cis_independent':
             summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)

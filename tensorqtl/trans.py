@@ -41,9 +41,7 @@ def filter_cis(pairs_df, phenotype_pos_df, variant_df, window=5000000):
     """
     pos_dict = phenotype_pos_df.T.to_dict()
     variant_df = variant_df.loc[pairs_df['variant_id'].unique()].copy()
-    variant_dict = {}
-    for variant_id, chrom, pos in zip(variant_df.index, variant_df['chrom'], variant_df['pos']):
-        variant_dict[variant_id] = {'chrom':chrom, 'pos':pos}
+    variant_dict = {v:{'chrom':c, 'pos':p} for v,c,p in zip(variant_df.index, variant_df['chrom'], variant_df['pos'])}
 
     drop_ix = []
     for k,gene_id,variant_id in zip(pairs_df['phenotype_id'].index, pairs_df['phenotype_id'], pairs_df['variant_id']):
