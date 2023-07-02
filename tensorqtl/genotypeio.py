@@ -565,5 +565,7 @@ def generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, chunk_size, wind
             gt_df = pgr.read_dosages_range(chunk_df['start'].values[0], chunk_df['end'].values[-1], dtype=np.float32)
         else:
             gt_df = pgr.read_range(chunk_df['start'].values[0], chunk_df['end'].values[-1], impute_mean=False, dtype=np.int8)
+            # temporary workaround
+            gt_df.values[gt_df.values == -9] = -1
         var_df = variant_df.iloc[chunk_df['start'].values[0]:chunk_df['end'].values[-1]+1]
         yield gt_df, var_df, phenotype_df[ix], phenotype_pos_df[ix], ci
