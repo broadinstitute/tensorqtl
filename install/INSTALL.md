@@ -1,6 +1,6 @@
 ### Setup CUDA drivers and PyTorch on GCP
 
-Launch a new instance configured with Ubuntu 20.04 LTS and a GPU, clone this repository, and run the following:
+Launch a new instance configured with Ubuntu 22.04 LTS and a GPU, clone this repository, and run the following:
 #### Install CUDA
 ```bash
 sudo ./install_cuda.sh
