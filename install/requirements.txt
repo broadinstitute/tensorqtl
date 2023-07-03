@@ -5,6 +5,7 @@ matplotlib
 numpy
 pandas
 pandas-plink
+Pgenlib >= 0.90.1
 pyarrow
 qtl
 rpy2

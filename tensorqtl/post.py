@@ -15,16 +15,14 @@ import qtl.genotype as gt
 
 
 has_rpy2 = False
-e = subprocess.call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
+    subprocess.check_call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.check_call("R -e 'library(qvalue)'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     import rpy2
     import rfunc
-    if e == 0:
-        has_rpy2 = True
+    has_rpy2 = True
 except:
-    pass
-if not has_rpy2:
-    print("Warning: 'rfunc' cannot be imported. R and the 'rpy2' Python package are needed.")
+    print("Warning: 'rfunc' cannot be imported. R with the 'qvalue' library, and the 'rpy2' Python package are needed.")
 
 
 def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):

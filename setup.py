@@ -25,10 +25,10 @@ setup(
         ]
     },
     install_requires = [
-        'Cython',
         'numpy',
         'pandas',
         'pandas-plink',
+        'Pgenlib>=0.90.1',
         'pyarrow',
         'qtl',
         'scipy',
