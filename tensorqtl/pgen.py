@@ -18,7 +18,9 @@ def read_pvar(pvar_path):
 
 def read_psam(psam_path):
     """Read psam file as pd.DataFrame"""
-    return pd.read_csv(psam_path, sep='\t', index_col=0)
+    psam_df = pd.read_csv(psam_path, sep='\t', index_col=0)
+    psam_df.index = psam_df.index.astype(str)
+    return psam_df
 
 
 def hardcall_phase_present(pgen_path):
@@ -521,7 +523,7 @@ class PgenReader(object):
 
     def get_ld_matrix(self, variant_ids, dtype=np.float32):
         g = self.read_list(variant_ids, dtype=dtype).values
-        return np.corrcoef(g)
+        return pd.DataFrame(np.corrcoef(g), index=variant_ids, columns=variant_ids)
 
 
 def load_dosages_df(plink_prefix_path, select_samples=None):
