@@ -40,6 +40,7 @@ def main():
     parser.add_argument('--chunk_size', default=None, help="For cis-QTL mapping, load genotypes into CPU memory in chunks of chunk_size variants, or by chromosome if chunk_size is 'chr'.")
     parser.add_argument('--disable_beta_approx', action='store_true', help='Disable Beta-distribution approximation of empirical p-values (not recommended).')
     parser.add_argument('--warn_monomorphic', action='store_true', help='Warn if monomorphic variants are found.')
+    parser.add_argument('--max_effects', default=10, help='Maximum number of non-zero effects in the SuSiE regression model.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
     parser.add_argument('--qvalue_lambda', default=None, type=np.float64, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('--seed', default=None, type=int, help='Seed for permutations.')
@@ -240,16 +241,16 @@ def main():
             phenotype_pos_df = phenotype_pos_df.loc[phenotype_ids]
             if args.chunk_size is None:
                 summary_df, res = susie.map(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
-                                            covariates_df, paired_covariate_df=paired_covariate_df, maf_threshold=maf_threshold,
-                                            max_iter=500, window=args.window, summary_only=False)
+                                            covariates_df, paired_covariate_df=paired_covariate_df, L=args.max_effects,
+                                            maf_threshold=maf_threshold, max_iter=500, window=args.window, summary_only=False)
             else:
                 summary_df = []
                 res = {}
                 for gt_df, var_df, p_df, p_pos_df, _ in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
                                                                                           dosages=args.dosages, verbose=True):
                     chunk_summary_df, chunk_res = susie.map(gt_df, var_df, p_df, p_pos_df,
-                                                            covariates_df, paired_covariate_df=paired_covariate_df, maf_threshold=maf_threshold,
-                                                            max_iter=500, window=args.window, summary_only=False)
+                                                            covariates_df, paired_covariate_df=paired_covariate_df, L=args.max_effects,
+                                                            maf_threshold=maf_threshold, max_iter=500, window=args.window, summary_only=False)
                     summary_df.append(chunk_summary_df)
                     res |= chunk_res
                 summary_df = pd.concat(summary_df).reset_index(drop=True)
