@@ -40,7 +40,7 @@ def main():
     parser.add_argument('--chunk_size', default=None, help="For cis-QTL mapping, load genotypes into CPU memory in chunks of chunk_size variants, or by chromosome if chunk_size is 'chr'.")
     parser.add_argument('--disable_beta_approx', action='store_true', help='Disable Beta-distribution approximation of empirical p-values (not recommended).')
     parser.add_argument('--warn_monomorphic', action='store_true', help='Warn if monomorphic variants are found.')
-    parser.add_argument('--max_effects', default=10, help='Maximum number of non-zero effects in the SuSiE regression model.')
+    parser.add_argument('--max_effects', type=int, default=10, help='Maximum number of non-zero effects in the SuSiE regression model.')
     parser.add_argument('--fdr', default=0.05, type=np.float64, help='FDR for cis-QTLs')
     parser.add_argument('--qvalue_lambda', default=None, type=np.float64, help='lambda parameter for pi0est in qvalue.')
     parser.add_argument('--seed', default=None, type=int, help='Seed for permutations.')
