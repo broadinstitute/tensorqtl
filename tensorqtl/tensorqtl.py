@@ -126,7 +126,7 @@ def main():
         group_s = None
 
     # load genotypes
-    if args.chunk_size is None or not args.mode.startswith('cis'):  # load all genotypes into memory
+    if args.chunk_size is None:  # load all genotypes into memory
         logger.write(f'  * loading genotype dosages' if args.dosages else f'  * loading genotypes')
         genotype_df, variant_df = genotypeio.load_genotypes(args.genotype_path, select_samples=phenotype_df.columns, dosages=args.dosages)
         if variant_df is None:
@@ -272,10 +272,33 @@ def main():
             else:
                 interaction_df = interaction_df.squeeze('columns')
 
-        pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
-                                  return_sparse=return_sparse, pval_threshold=pval_threshold,
-                                  maf_threshold=maf_threshold, batch_size=args.batch_size,
-                                  return_r2=args.return_r2, logger=logger)
+        if args.chunk_size is None:
+            pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
+                                       return_sparse=return_sparse, pval_threshold=pval_threshold,
+                                       maf_threshold=maf_threshold, batch_size=args.batch_size,
+                                       return_r2=args.return_r2, logger=logger)
+        else:
+            pairs_df = []
+            n, rem = np.divmod(pgr.num_variants, int(args.chunk_size))
+            bounds = [0] + n * [int(args.chunk_size)]
+            if rem != 0:
+                bounds.append(rem)
+            bounds = np.cumsum(bounds)
+            nchunks = len(bounds)-1
+            for i in range(nchunks):
+                print(f"Processing genotype chunk {i+1}/{nchunks}")
+                if args.dosages:
+                    gt_df = pgr.read_dosages_range(bounds[i], bounds[i+1]-1, dtype=np.float32)
+                else:
+                    gt_df = pgr.read_range(bounds[i], bounds[i+1]-1, impute_mean=False, dtype=np.int8)
+                    # temporary workaround
+                    gt_df.values[gt_df.values == -9] = -1
+                pairs_df.append(trans.map_trans(gt_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
+                                                return_sparse=return_sparse, pval_threshold=pval_threshold,
+                                                maf_threshold=maf_threshold, batch_size=args.batch_size,
+                                                return_r2=args.return_r2, logger=logger))
+            pairs_df = pd.concat(pairs_df).reset_index(drop=True)
+            variant_df = pgr.variant_df
 
         if variant_df is not None:
             logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
