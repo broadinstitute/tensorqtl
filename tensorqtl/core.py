@@ -372,7 +372,7 @@ def read_phenotype_bed(phenotype_bed):
     """Load phenotype BED file as phenotype and position DataFrames"""
     if phenotype_bed.endswith(('.bed.gz', '.bed')):
         phenotype_df = pd.read_csv(phenotype_bed, sep='\t', index_col=3, dtype={'#chr':str, '#Chr':str})
-    elif phenotype_bed.endswith('.parquet'):
+    elif phenotype_bed.endswith('.bed.parquet'):
         phenotype_df = pd.read_parquet(phenotype_bed)
         phenotype_df.set_index(phenotype_df.columns[3], inplace=True)
     else:

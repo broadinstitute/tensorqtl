@@ -18,9 +18,9 @@ import genotypeio, cis, trans, susie
 def main():
     parser = argparse.ArgumentParser(description='tensorQTL: GPU-based QTL mapper')
     parser.add_argument('genotype_path', help='Genotypes in PLINK format')
-    parser.add_argument('phenotype_bed', help='Phenotypes in BED format')
+    parser.add_argument('phenotypes', help="Phenotypes in BED format (.bed, .bed.gz, .bed.parquet), or optionally for 'trans' mode, parquet or tab-delimited.")
     parser.add_argument('prefix', help='Prefix for output file names')
-    parser.add_argument('--mode', default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'cis_susie', 'trans'], help='Mapping mode. Default: cis')
+    parser.add_argument('--mode', type=str, default='cis', choices=['cis', 'cis_nominal', 'cis_independent', 'cis_susie', 'trans'], help='Mapping mode. Default: cis')
     parser.add_argument('--covariates', default=None, help='Covariates file, tab-delimited, covariates x samples')
     parser.add_argument('--paired_covariate', default=None, help='Single phenotype-specific covariate. Tab-delimited file, phenotypes x samples')
     parser.add_argument('--permutations', type=int, default=10000, help='Number of permutations. Default: 10000')
@@ -64,12 +64,24 @@ def main():
         logger.write(f'  * using seed {args.seed}')
 
     # load inputs
-    logger.write(f'  * reading phenotypes ({args.phenotype_bed})')
-    phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotype_bed)
-    if phenotype_pos_df.columns[1] == 'pos':
-        logger.write(f"  * cis-window detected as position ± {args.window:,}")
-    else:
-        logger.write(f"  * cis-window detected as [start - {args.window:,}, end + {args.window:,}]")
+    logger.write(f'  * reading phenotypes ({args.phenotypes})')
+    # for cis modes, require BED input with position information
+    if args.mode.startswith('cis'):
+        assert args.phenotypes.endswith(('.bed', '.bed.gz', '.bed.parquet')), "For cis modes, phenotypes must be in BED format."
+        phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotypes)
+        if phenotype_pos_df.columns[1] == 'pos':
+            logger.write(f"  * cis-window detected as position ± {args.window:,}")
+        else:
+            logger.write(f"  * cis-window detected as [start - {args.window:,}, end + {args.window:,}]")
+    elif args.mode == 'trans':
+        if args.phenotypes.endswith(('.bed', '.bed.gz', '.bed.parquet')):
+            phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotypes)
+        else:
+            if args.phenotypes.endswith('.parquet'):
+                phenotype_df = pd.read_parquet(args.phenotypes)
+            else:  # assume tab-delimited
+                phenotype_df = pd.read_csv(args.phenotypes, sep='\t', index_col=0)
+            phenotype_pos_df = None
 
     if args.covariates is not None:
         logger.write(f'  * reading covariates ({args.covariates})')
@@ -300,7 +312,7 @@ def main():
             pairs_df = pd.concat(pairs_df).reset_index(drop=True)
             variant_df = pgr.variant_df
 
-        if variant_df is not None:
+        if variant_df is not None and phenotype_pos_df is not None:
             logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
             pairs_df = trans.filter_cis(pairs_df, phenotype_pos_df, variant_df, window=5000000)
 
