@@ -303,8 +303,6 @@ def main():
                     gt_df = pgr.read_dosages_range(bounds[i], bounds[i+1]-1, dtype=np.float32)
                 else:
                     gt_df = pgr.read_range(bounds[i], bounds[i+1]-1, impute_mean=False, dtype=np.int8)
-                    # temporary workaround
-                    gt_df.values[gt_df.values == -9] = -1
                 pairs_df.append(trans.map_trans(gt_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
                                                 return_sparse=return_sparse, pval_threshold=pval_threshold,
                                                 maf_threshold=maf_threshold, batch_size=args.batch_size,

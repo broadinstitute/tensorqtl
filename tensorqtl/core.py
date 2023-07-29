@@ -109,14 +109,14 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
     return genotypes_t, mask_t
 
 
-def impute_mean(genotypes_t):
+def impute_mean(genotypes_t, missing=-9):
     """Impute missing genotypes to mean"""
-    m = genotypes_t == -1
+    m = genotypes_t == missing
     ix = torch.nonzero(m, as_tuple=True)[0]
     if len(ix) > 0:
         a = genotypes_t.sum(1)
         b = m.sum(1).float()
-        mu = (a + b) / (genotypes_t.shape[1] - b)
+        mu = (a - missing*b) / (genotypes_t.shape[1] - b)
         genotypes_t[m] = mu[ix]
 
 

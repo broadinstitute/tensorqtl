@@ -780,8 +780,8 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
 
 def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos_df, covariates_df,
-                    group_s=None, maf_threshold=0, fdr=0.05, fdr_col='qval', nperm=10000,
-                    window=1000000, random_tiebreak=False, logger=None, seed=None, verbose=True):
+                    group_s=None, maf_threshold=0, fdr=0.05, fdr_col='qval', nperm=10000, window=1000000,
+                    missing=-9, random_tiebreak=False, logger=None, seed=None, verbose=True):
     """
     Run independent cis-QTL mapping (forward-backward regression)
 
@@ -871,7 +871,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 # add variant to covariates
                 variant_id = forward_df[-1]['variant_id']
                 ig = genotype_df.values[ix_dict[variant_id], genotype_ix].copy()
-                m = ig == -1
+                m = ig == missing
                 ig[m] = ig[~m].mean()
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
@@ -952,7 +952,7 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 # add variant to covariates
                 variant_id = forward_df[-1]['variant_id']
                 ig = genotype_df.values[ix_dict[variant_id], genotype_ix].copy()
-                m = ig == -1
+                m = ig == missing
                 ig[m] = ig[~m].mean()
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)

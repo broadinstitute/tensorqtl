@@ -110,7 +110,7 @@ def _get_field_ix(line, field):
 #------------------------------------------------------------------------------
 #  Functions for loading regions/variants from VCFs
 #------------------------------------------------------------------------------
-def _impute_mean(g, missing=-1, verbose=False):
+def _impute_mean(g, missing=-9, verbose=False):
     """Impute rows to mean (in place)"""
     if not g.dtype in [np.float32, np.float64]:
         raise ValueError('Input dtype must be np.float32 or np.float64')
@@ -147,7 +147,7 @@ class PlinkReader(object):
         self.bim, self.fam, self.bed = read_plink(plink_prefix_path, verbose=verbose)
         self.bed = 2 - self.bed  # flip allele order: PLINK uses REF as effect allele
         if dtype == np.int8:
-            self.bed[np.isnan(self.bed)] = -1  # convert missing (NaN) to -1 for int8
+            self.bed[np.isnan(self.bed)] = -9  # convert missing (NaN) to -9 for int8
         self.bed = self.bed.astype(dtype, copy=False)
         self.sample_ids = self.fam['iid'].tolist()
         if select_samples is not None:
@@ -238,8 +238,6 @@ def load_genotypes(genotype_path, select_samples=None, dosages=False):
             genotype_df = pgr.load_dosages()
         else:
             genotype_df = pgr.load_genotypes()
-            # temporary workaround
-            genotype_df.values[genotype_df.values == -9] = -1
     elif all([os.path.exists(f"{genotype_path}.{ext}") for ext in ['bed', 'bim', 'fam']]):
         pr = PlinkReader(genotype_path, select_samples=select_samples, dtype=np.int8)
         genotype_df = pr.load_genotypes()
@@ -284,9 +282,9 @@ def get_vcf_region(region_str, vcfpath, field='GT', sample_ids=None, select_samp
     if impute_missing:
         n = 0
         for v in df.values:
-            ix = np.isnan(v)
-            if np.any(ix):
-                v[ix] = np.mean(v[~ix])
+            m = np.isnan(v)
+            if np.any(m):
+                v[m] = np.mean(v[~m])
                 n += 1
         if n > 0:
             print(f'    imputed at least 1 sample in {n} sites')
@@ -565,7 +563,5 @@ def generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, chunk_size, wind
             gt_df = pgr.read_dosages_range(chunk_df['start'].values[0], chunk_df['end'].values[-1], dtype=np.float32)
         else:
             gt_df = pgr.read_range(chunk_df['start'].values[0], chunk_df['end'].values[-1], impute_mean=False, dtype=np.int8)
-            # temporary workaround
-            gt_df.values[gt_df.values == -9] = -1
         var_df = variant_df.iloc[chunk_df['start'].values[0]:chunk_df['end'].values[-1]+1]
         yield gt_df, var_df, phenotype_df[ix], phenotype_pos_df[ix], ci
