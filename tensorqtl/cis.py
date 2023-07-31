@@ -172,7 +172,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         assert interaction_df.index.equals(phenotype_df.columns)
         logger.write(f"  * including {interaction_df.shape[1]} interaction term(s)")
         if maf_threshold_interaction > 0:
-            logger.write(f'    * using {maf_threshold_interaction:.2f} MAF threshold')
+            logger.write(f'    * using {maf_threshold_interaction} MAF threshold')
     elif maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
     logger.write(f'  * cis-window: ±{window:,}')
