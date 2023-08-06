@@ -67,14 +67,14 @@ def main():
     logger.write(f'  * reading phenotypes ({args.phenotypes})')
     # for cis modes, require BED input with position information
     if args.mode.startswith('cis'):
-        assert args.phenotypes.endswith(('.bed', '.bed.gz', '.bed.parquet')), "For cis modes, phenotypes must be in BED format."
+        assert args.phenotypes.lower().endswith(('.bed', '.bed.gz', '.bed.parquet')), "For cis modes, phenotypes must be in BED format."
         phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotypes)
         if phenotype_pos_df.columns[1] == 'pos':
             logger.write(f"  * cis-window detected as position ± {args.window:,}")
         else:
             logger.write(f"  * cis-window detected as [start - {args.window:,}, end + {args.window:,}]")
     elif args.mode == 'trans':
-        if args.phenotypes.endswith(('.bed', '.bed.gz', '.bed.parquet')):
+        if args.phenotypes.lower().endswith(('.bed', '.bed.gz', '.bed.parquet')):
             phenotype_df, phenotype_pos_df = read_phenotype_bed(args.phenotypes)
         else:
             if args.phenotypes.endswith('.parquet'):
