@@ -10,6 +10,7 @@
 import torch
 import numpy as np
 import pandas as pd
+from collections import defaultdict
 import sys
 import os
 import time
@@ -545,10 +546,88 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
     return s
 
 
+def map_loci(locus_df, genotype_df, variant_df, phenotype_df, covariates_df, **kwargs):
+    """
+    Run fine-mapping on phenotype-locus pairs defined in locus_df.
+
+    Parameters
+    ----------
+    locus_df : pd.DataFrame
+        DataFrame with columns ['phenotype_id', 'chr', 'start', 'end'] or
+        ['phenotype_id', 'chr', 'position'] where chr and pos define the
+        center of each locus to fine-map (±window)
+    genotype_df : pd.DataFrame
+        Genotypes (variants x samples)
+    variant_df : pd.DataFrame
+        Mapping of variant_id (index) to ['chrom', 'pos']
+    phenotype_df : pd.DataFrame
+        Phenotypes (phenotypes x samples)
+    covariates_df : pd.DataFrame
+        Covariates (samples x covariates)
+
+    See map() for optional parameters.
+
+    Returns
+    -------
+    summary_df : pd.DataFrame
+        Summary table of all credible sets
+    susie_outputs : dict
+        Full output, including Bayes factors
+    """
+    if 'window' in kwargs:
+        window = kwargs['window']
+    else:
+        window = 1000000
+
+    locus_df = locus_df.rename(columns={'position':'pos'}).copy()
+
+    # number of loci and index for each phenotype
+    num_loci = defaultdict(int)
+    locus_ix = []
+    for phenotype_id in locus_df['phenotype_id']:
+        num_loci[phenotype_id] += 1
+        locus_ix.append(num_loci[phenotype_id])
+    locus_df['locus'] = locus_ix
+
+    if 'start' in locus_df and 'end' in locus_df:
+        locus_df['locus_id'] = locus_df.apply(lambda x: f"{x['chr']}:{np.maximum(x['start'], 1)}-{x['end']}")
+        pos_df = locus_df[['phenotype_id', 'chr', 'start', 'end']]
+    else:
+        locus_df['locus_id'] = locus_df.apply(lambda x: f"{x['chr']}:{np.maximum(x['pos']-window, 1)}-{x['pos']+window}", axis=1)
+        pos_df = locus_df[['phenotype_id', 'chr', 'pos']]
+
+    # fine-map each locus (iterate over chunks, since phenotype can only be present in input once)
+    summary_df = []
+    res = {}
+    nmax = locus_df['locus'].max()
+    for i in np.arange(1, nmax + 1):
+        print(f"Processing locus group {i}/{nmax}")
+        m = locus_df['locus'] == i
+        chunk_summary_df, chunk_res = map(genotype_df, variant_df,
+                                          phenotype_df.loc[locus_df.loc[m, 'phenotype_id']], pos_df[m].set_index('phenotype_id'),
+                                          covariates_df, summary_only=False, **kwargs)
+        if len(chunk_summary_df) > 0:
+            chunk_summary_df.insert(1, 'locus', i)
+            merge_cols = ['phenotype_id', 'locus']
+            locus_coords_s = chunk_summary_df.merge(locus_df.loc[m, merge_cols + ['locus_id']],
+                                                    left_on=merge_cols, right_on=merge_cols)['locus_id']
+            # chunk_summary_df.insert(2, 'locus_id', chunk_summary_df['phenotype_id'] + '_' + locus_coords_s)
+            chunk_summary_df.insert(2, 'locus_id', chunk_summary_df['phenotype_id'] + '_' + chunk_summary_df['locus'].astype(str))
+            id_dict = chunk_summary_df.set_index('phenotype_id')['locus_id'].to_dict()
+            chunk_res = {id_dict[k]:v for k,v in chunk_res.items()}
+
+            summary_df.append(chunk_summary_df)
+            res |= chunk_res
+
+    summary_df = pd.concat(summary_df).reset_index(drop=True)
+
+    return summary_df, res
+
+
 def map(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_df,
         paired_covariate_df=None, L=10, scaled_prior_variance=0.2, estimate_residual_variance=True,
         estimate_prior_variance=True, tol=1e-3, coverage=0.95, min_abs_corr=0.5,
-        summary_only=True, maf_threshold=0, max_iter=100, window=1000000,
+        summary_only=True, maf_threshold=0, max_iter=200, window=1000000,
         logger=None, verbose=True, warn_monomorphic=False):
     """
     SuSiE fine-mapping: computes SuSiE model for all phenotypes
