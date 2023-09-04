@@ -8,6 +8,7 @@ import os
 import re
 import pickle
 import argparse
+from collections import defaultdict
 
 sys.path.insert(1, os.path.dirname(__file__))
 from core import *
@@ -274,12 +275,13 @@ def main():
 
     elif args.mode == 'trans_susie':
         assert args.susie_loci is not None
-        assert variant_df is not None
         if args.susie_loci.endswith('.parquet'):
             locus_df = pd.read_parquet(args.susie_loci)
         else:
             locus_df = pd.read_csv(args.susie_loci, sep='\t')
+        locus_df.rename(columns={'position':'pos'}, inplace=True)
         if args.chunk_size is None:
+            assert variant_df is not None
             summary_df, res = susie.map_loci(locus_df, genotype_df, variant_df, phenotype_df, covariates_df,
                                              maf_threshold=maf_threshold, max_iter=500, window=args.window)
         else:
@@ -307,6 +309,8 @@ def main():
                                        return_sparse=return_sparse, pval_threshold=pval_threshold,
                                        maf_threshold=maf_threshold, batch_size=args.batch_size,
                                        return_r2=args.return_r2, logger=logger)
+            if args.return_dense:
+                pval_df, b_df, b_se_df, af_s = pairs_df
         else:
             pairs_df = []
             n, rem = np.divmod(pgr.num_variants, int(args.chunk_size))
@@ -328,16 +332,23 @@ def main():
             pairs_df = pd.concat(pairs_df).reset_index(drop=True)
             variant_df = pgr.variant_df
 
-        if variant_df is not None and phenotype_pos_df is not None:
-            logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
-            pairs_df = trans.filter_cis(pairs_df, phenotype_pos_df, variant_df, window=5000000)
+        if return_sparse:
+            if variant_df is not None and phenotype_pos_df is not None:
+                logger.write('  * filtering out cis-QTLs (within +/-5Mb)')
+                pairs_df = trans.filter_cis(pairs_df, phenotype_pos_df, variant_df, window=5000000)
 
-        logger.write('  * writing output')
-        if not args.output_text:
-            pairs_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pairs.parquet'))
+            logger.write('  * writing sparse output')
+            if not args.output_text:
+                pairs_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pairs.parquet'))
+            else:
+                out_file = os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pairs.txt.gz')
+                pairs_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
         else:
-            out_file = os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pairs.txt.gz')
-            pairs_df.to_csv(out_file, sep='\t', index=False, float_format='%.6g')
+            logger.write('  * writing dense output')
+            pval_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_pval.parquet'))
+            b_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_beta.parquet'))
+            b_se_df.to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_beta_se.parquet'))
+            af_s.to_frame().to_parquet(os.path.join(args.output_dir, f'{args.prefix}.trans_qtl_af.parquet'))
 
     logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Finished mapping')
 
