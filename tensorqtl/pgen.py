@@ -493,33 +493,46 @@ class PgenReader(object):
         """Load all alleles."""
         return self.read_alleles_range(0, self.num_variants-1)
 
-    def get_pairwise_ld(self, id1, id2, dtype=np.float32):
+    def get_pairwise_ld(self, id1, id2, r2=True, dtype=np.float32):
         """Compute pairwise LD (R2) between (lists of) variants"""
         if isinstance(id1, str) and isinstance(id2, str):
             g1 = self.read(id1, dtype=dtype)
             g2 = self.read(id2, dtype=dtype)
             g1 -= g1.mean()
             g2 -= g2.mean()
-            return (g1 * g2).sum()**2 / ( (g1**2).sum() * (g2**2).sum() )
+            if r2:
+                r = (g1 * g2).sum()**2 / ( (g1**2).sum() * (g2**2).sum() )
+            else:
+                r = (g1 * g2).sum() / np.sqrt( (g1**2).sum() * (g2**2).sum() )
         elif isinstance(id1, str):
             g1 = self.read(id1, dtype=dtype)
             g2 = self.read_list(id2, dtype=dtype)
             g1 -= g1.mean()
             g2 -= g2.values.mean(1, keepdims=True)
-            return (g1 * g2).sum(1)**2 / ( (g1**2).sum() * (g2**2).sum(1) )
+            if r2:
+                r = (g1 * g2).sum(1)**2 / ( (g1**2).sum() * (g2**2).sum(1) )
+            else:
+                r = (g1 * g2).sum(1) / np.sqrt( (g1**2).sum() * (g2**2).sum(1) )
         elif isinstance(id2, str):
             g1 = self.read_list(id1, dtype=dtype)
             g2 = self.read(id2, dtype=dtype)
             g1 -= g1.values.mean(1, keepdims=True)
             g2 -= g2.mean()
-            return (g1 * g2).sum(1)**2 / ( (g1**2).sum(1) * (g2**2).sum() )
+            if r2:
+                r = (g1 * g2).sum(1)**2 / ( (g1**2).sum(1) * (g2**2).sum() )
+            else:
+                r = (g1 * g2).sum(1) / np.sqrt( (g1**2).sum(1) * (g2**2).sum() )
         else:
             assert len(id1) == len(id2)
             g1 = self.read_list(id1, dtype=dtype).values
             g2 = self.read_list(id2, dtype=dtype).values
             g1 -= g1.mean(1, keepdims=True)
             g2 -= g2.mean(1, keepdims=True)
-            return (g1 * g2).sum(1) ** 2 / ( (g1**2).sum(1) * (g2**2).sum(1) )
+            if r2:
+                r = (g1 * g2).sum(1) ** 2 / ( (g1**2).sum(1) * (g2**2).sum(1) )
+            else:
+                r = (g1 * g2).sum(1) / np.sqrt( (g1**2).sum(1) * (g2**2).sum(1) )
+        return r
 
     def get_ld_matrix(self, variant_ids, dtype=np.float32):
         g = self.read_list(variant_ids, dtype=dtype).values
