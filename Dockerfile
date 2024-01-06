@@ -1,5 +1,6 @@
 # Dockerfile for tensorQTL
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+# https://gitlab.com/nvidia/container-images/cuda/blob/master/doc/unsupported-tags.md
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 MAINTAINER Francois Aguet
 
 RUN apt-get update && apt-get install -y software-properties-common && \
@@ -27,15 +28,15 @@ RUN apt-get update && apt-get install -y software-properties-common && \
 
 # htslib
 RUN cd /opt && \
-    wget --no-check-certificate https://github.com/samtools/htslib/releases/download/1.17/htslib-1.17.tar.bz2 && \
-    tar -xf htslib-1.17.tar.bz2 && rm htslib-1.17.tar.bz2 && cd htslib-1.17 && \
+    wget --no-check-certificate https://github.com/samtools/htslib/releases/download/1.19/htslib-1.19.tar.bz2 && \
+    tar -xf htslib-1.19.tar.bz2 && rm htslib-1.19.tar.bz2 && cd htslib-1.19 && \
     ./configure --enable-libcurl --enable-s3 --enable-plugins --enable-gcs && \
     make && make install && make clean
 
 # bcftools
 RUN cd /opt && \
-    wget --no-check-certificate https://github.com/samtools/bcftools/releases/download/1.17/bcftools-1.17.tar.bz2 && \
-    tar -xf bcftools-1.17.tar.bz2 && rm bcftools-1.17.tar.bz2 && cd bcftools-1.17 && \
+    wget --no-check-certificate https://github.com/samtools/bcftools/releases/download/1.19/bcftools-1.19.tar.bz2 && \
+    tar -xf bcftools-1.19.tar.bz2 && rm bcftools-1.19.tar.bz2 && cd bcftools-1.19 && \
     ./configure --with-htslib=system && make && make install && make clean
 
 # install R
@@ -50,7 +51,7 @@ RUN Rscript -e 'if (!requireNamespace("BiocManager", quietly = TRUE)) {install.p
 RUN pip3 install --upgrade pip setuptools
 RUN pip3 install numpy pandas scipy
 RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow torch rpy2 gcsfs Pgenlib>=0.90.1
-RUN pip3 install tensorqtl==1.0.8
+RUN pip3 install tensorqtl==1.0.9
 
 # RUN cd /opt && \
 #     wget https://github.com/broadinstitute/tensorqtl/archive/v1.0.8.tar.gz && \
