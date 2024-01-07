@@ -1,0 +1,15 @@
+name: tensorqtl
+dependencies:
+- python=3.11
+- pip
+- pip:
+  - numpy
+  - pandas
+  - pandas-plink
+  - Pgenlib>=0.90.1
+  - pyarrow
+  - qtl
+  - rpy2
+  - scipy
+  - torch
+  - tensorqtl
