@@ -106,7 +106,7 @@ def calculate_association(genotype_df, phenotype_s, covariates_df=None,
         if maf_threshold_interaction > 0:
             mask_s = pd.Series(True, index=interaction_s.index)
             mask_s[interaction_s.sort_values(kind='mergesort').index[:interaction_s.shape[0]//2]] = False
-            interaction_mask_t = torch.BoolTensor(mask_s).to(device)
+            interaction_mask_t = torch.BoolTensor(mask_s.values).to(device)
         else:
             interaction_mask_t = None
 
@@ -186,7 +186,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
         if maf_threshold_interaction > 0 and ni == 1:
             mask_s = pd.Series(True, index=interaction_df.index)
             mask_s[interaction_df[interaction_df.columns[0]].sort_values(kind='mergesort').index[:interaction_df.shape[0]//2]] = False
-            interaction_mask_t = torch.BoolTensor(mask_s).to(device)
+            interaction_mask_t = torch.BoolTensor(mask_s.values).to(device)
         else:
             # TODO: implement filtering for multiple interactions?
             interaction_mask_t = None
@@ -530,20 +530,22 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
 
     if interaction_df is not None and len(best_assoc) > 0:
         best_assoc = pd.concat(best_assoc, axis=1, sort=False).T.set_index('phenotype_id').infer_objects()
+        for x in ['pval_g', 'pval_i', 'pval_gi']:
+            best_assoc[x] = best_assoc[x].astype(np.float64)
         m = best_assoc['pval_g'].notnull()
         m = m[m].index
         if paired_covariate_df is not None:
             idof = dof - best_assoc.index.isin(paired_covariate_df.columns).astype(int).values[m]
         else:
             idof = dof
-        best_assoc.loc[m, 'pval_g'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), idof)
+        best_assoc.loc[m, 'pval_g'] = 2 * stats.t.cdf(-best_assoc.loc[m, 'pval_g'].abs(), idof)
         if ni == 1:
-            best_assoc.loc[m, 'pval_i'] =  2*stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), idof)
-            best_assoc.loc[m, 'pval_gi'] = 2*stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), idof)
+            best_assoc.loc[m, 'pval_i'] =  2 * stats.t.cdf(-best_assoc.loc[m, 'pval_i'].abs(), idof)
+            best_assoc.loc[m, 'pval_gi'] = 2 * stats.t.cdf(-best_assoc.loc[m, 'pval_gi'].abs(), idof)
         else:
             for i in range(1, ni+1):
-                best_assoc.loc[m, f'pval_i{i}'] =  2*stats.t.cdf(-best_assoc.loc[m, f'pval_i{i}'].abs(), idof)
-                best_assoc.loc[m, f'pval_gi{i}'] = 2*stats.t.cdf(-best_assoc.loc[m, f'pval_gi{i}'].abs(), idof)
+                best_assoc.loc[m, f'pval_i{i}'] =  2 * stats.t.cdf(-best_assoc.loc[m, f'pval_i{i}'].abs(), idof)
+                best_assoc.loc[m, f'pval_gi{i}'] = 2 * stats.t.cdf(-best_assoc.loc[m, f'pval_gi{i}'].abs(), idof)
         if run_eigenmt and ni == 1:  # leave correction of specific p-values up to user for now (TODO)
             if group_s is None:
                 best_assoc['pval_emt'] = np.minimum(best_assoc['tests_emt']*best_assoc['pval_gi'], 1)
