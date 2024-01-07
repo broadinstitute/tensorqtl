@@ -9,16 +9,26 @@ sudo reboot
 nvidia-smi
 ```
 
-#### Install Python 3
+#### Install R
+Required for computing q-values. Follow instructions [here](https://www.digitalocean.com/community/tutorials/how-to-install-r-on-ubuntu-22-04), then install the 'qvalue' package with
 ```bash
-sudo apt update
-sudo apt install -y python3-pip python3-dev python3-virtualenv
-pip3 install --upgrade pip virtualenv setuptools
-virtualenv venv
-source venv/bin/activate
-pip3 install -r requirements.txt
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("qvalue")
+```
+
+#### Install Python 3
+Using a [conda](https://github.com/conda-forge/miniforge) environment is recommended. The `tensorqtl_env.yml` configuration contains all required packages, including `torch` and `tensorqtl`.
+```bash
+mamba env create -f tensorqtl_env.yml
+conda activate tensorqtl
+
 # verify
 python -c "import torch; print(torch.__version__); print('CUDA available: {} ({})'.format(torch.cuda.is_available(), torch.cuda.get_device_name(torch.cuda.current_device())))"
+
+# this should print something like
+# 2.1.2+cu121
+# CUDA available: True (Tesla P100-PCIE-16GB)
 ```
 
 #### Install rmate (optional)
