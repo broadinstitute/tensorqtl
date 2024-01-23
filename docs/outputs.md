@@ -4,7 +4,8 @@ Column | Description
 --- | ---
 `phenotype_id` | Phenotype ID
 `variant_id` | Variant ID
-`tss_distance` | Distance between the variant and phenotype
+`start_distance` | Distance between the variant and phenotype start position (e.g., TSS)
+`end_distance` | Distance between the variant and phenotype end position (only present if different from start position)
 `af` | In-sample ALT allele frequency of the variant
 `ma_samples` | Number of samples carrying at least on minor allele
 `ma_count` | Number of minor alleles
@@ -39,7 +40,8 @@ Column | Description
 `true_df` | Degrees of freedom used to compute p-values
 `pval_true_df` | Nominal p-value based on `true_df`
 `variant_id` | Variant ID
-`tss_distance` | Distance between the variant and phenotype
+`start_distance` | Distance between the variant and phenotype start position (e.g., TSS)
+`end_distance` | Distance between the variant and phenotype end position (only present if different from start position)
 `ma_samples` | Number of samples carrying at least on minor allele
 `ma_count` | Number of minor alleles
 `af` | In-sample ALT allele frequency of the variant
