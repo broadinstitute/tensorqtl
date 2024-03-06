@@ -13,6 +13,7 @@ from collections import defaultdict
 sys.path.insert(1, os.path.dirname(__file__))
 from core import *
 from post import *
+from . import __version__
 import genotypeio, cis, trans, susie
 
 
@@ -30,7 +31,7 @@ def main():
     parser.add_argument('--cis_output', default=None, type=str, help="Output from 'cis' mode with q-values. Required for independent cis-QTL mapping.")
     parser.add_argument('--phenotype_groups', default=None, type=str, help='Phenotype groups. Header-less TSV with two columns: phenotype_id, group_id')
     parser.add_argument('--window', default=1000000, type=np.int32, help='Cis-window size, in bases. Default: 1000000.')
-    parser.add_argument('--pval_threshold', default=None, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
+    parser.add_argument('--pval_threshold', default=1e-5, type=np.float64, help='Output only significant phenotype-variant pairs with a p-value below threshold. Default: 1e-5 for trans-QTL')
     parser.add_argument('--maf_threshold', default=0, type=np.float64, help='Include only genotypes with minor allele frequency >= maf_threshold. Default: 0')
     parser.add_argument('--maf_threshold_interaction', default=0.05, type=np.float64, help='MAF threshold for interactions, applied to lower and upper half of samples')
     parser.add_argument('--dosages', action='store_true', help='Load dosages instead of genotypes (only applies to PLINK2 bgen input).')
@@ -57,7 +58,7 @@ def main():
         raise ValueError("Interactions are only supported in 'cis_nominal' or 'trans' mode.")
 
     logger = SimpleLogger(os.path.join(args.output_dir, f'{args.prefix}.tensorQTL.{args.mode}.log'))
-    logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Running TensorQTL: {args.mode.split("_")[0]}-QTL mapping')
+    logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Running TensorQTL v{__version__}: {args.mode.split("_")[0]}-QTL mapping')
     if torch.cuda.is_available():
         logger.write(f'  * using GPU ({torch.cuda.get_device_name(torch.cuda.current_device())})')
     else:
@@ -293,10 +294,8 @@ def main():
 
     elif args.mode == 'trans':
         return_sparse = not args.return_dense
-        pval_threshold = args.pval_threshold
-        if pval_threshold is None and return_sparse:
-            pval_threshold = 1e-5
-            logger.write(f'  * p-value threshold: {pval_threshold:.2g}')
+        if return_sparse:
+            logger.write(f'  * p-value threshold: {args.pval_threshold:.2g}')
 
         if interaction_df is not None:
             if interaction_df.shape[1] > 1:
@@ -306,7 +305,7 @@ def main():
 
         if args.chunk_size is None:
             pairs_df = trans.map_trans(genotype_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
-                                       return_sparse=return_sparse, pval_threshold=pval_threshold,
+                                       return_sparse=return_sparse, pval_threshold=args.pval_threshold,
                                        maf_threshold=maf_threshold, batch_size=args.batch_size,
                                        return_r2=args.return_r2, logger=logger)
             if args.return_dense:
@@ -326,7 +325,7 @@ def main():
                 else:
                     gt_df = pgr.read_range(bounds[i], bounds[i+1]-1, impute_mean=False, dtype=np.int8)
                 pairs_df.append(trans.map_trans(gt_df, phenotype_df, covariates_df=covariates_df, interaction_s=interaction_df,
-                                                return_sparse=return_sparse, pval_threshold=pval_threshold,
+                                                return_sparse=return_sparse, pval_threshold=args.pval_threshold,
                                                 maf_threshold=maf_threshold, batch_size=args.batch_size,
                                                 return_r2=args.return_r2, logger=logger))
             pairs_df = pd.concat(pairs_df).reset_index(drop=True)
