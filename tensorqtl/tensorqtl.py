@@ -128,7 +128,7 @@ def main():
         maf_threshold = args.maf_threshold
 
     if args.phenotype_groups is not None:
-        group_s = pd.read_csv(args.phenotype_groups, sep='\t', index_col=0, header=None).squeeze('columns')
+        group_s = pd.read_csv(args.phenotype_groups, sep='\t', index_col=0, header=None).squeeze('columns').rename(None)
         # verify sort order
         group_dict = group_s.to_dict()
         previous_group = ''
