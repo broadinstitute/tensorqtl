@@ -133,12 +133,12 @@ python3 -m tensorqtl ${plink_prefix_path} ${expression_bed} ${prefix} \
 ```
 
 #### *cis*-QTL mapping: interactions
-Instead of mapping the standard linear model (p ~ g), this mode includes an interaction term (p ~ g + i + gi) and returns full summary statistics for the model. The interaction term is a tab-delimited text file or `pd.Series` mapping sample ID to interaction value. With the `run_eigenmt=True` option, [eigenMT](https://www.cell.com/ajhg/fulltext/S0002-9297(15)00492-9)-adjusted p-values are computed.
+Instead of mapping the standard linear model (p ~ g), this mode includes an interaction term (p ~ g + i + gi) and returns full summary statistics for the model. The interaction term is a tab-delimited text file or dataframe mapping sample ID to interaction value(s) (if multiple interactions are used, the file must include a header with variable names). With the `run_eigenmt=True` option, [eigenMT](https://www.cell.com/ajhg/fulltext/S0002-9297(15)00492-9)-adjusted p-values are computed.
 In Python:
 ```
 cis.map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, prefix,
                 covariates_df=covariates_df,
-                interaction_s=interaction_s, maf_threshold_interaction=0.05,
+                interaction_df=interaction_df, maf_threshold_interaction=0.05,
                 run_eigenmt=True, output_dir='.', write_top=True, write_stats=True)
 ```
 The input options `write_top` and `write_stats` control whether the top association per phenotype and full summary statistics, respectively, are written to file.
