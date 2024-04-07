@@ -68,3 +68,4 @@ Column | Description
 `b` | Regression slope
 `b_se` | Standard error of the regression slope
 `af` | In-sample ALT allele frequency of the variant
+`r2` | squared residual genotype-phenotype correlation (only generated if `map_trans(..., return_r2=True)`)
