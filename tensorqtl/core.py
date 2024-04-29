@@ -315,12 +315,12 @@ def pval_from_corr(r2, dof):
     return 2*stats.t.cdf(-np.abs(np.sqrt(tstat2)), dof)
 
 
-def df_cost(r2, dof):
-    """minimize abs(1-alpha) as a function of M_eff"""
+def beta_shape_1_from_dof(r2, dof):
+    """compute the Beta shape 1 parameter from moment matching"""
     pval = pval_from_corr(r2, dof)
     mean = np.mean(pval)
     var = np.var(pval)
-    return mean * (mean * (1.0-mean) / var - 1.0) - 1.0
+    return mean * (mean * (1.0-mean) / var - 1.0)
 
 
 def beta_log_likelihood(x, shape1, shape2):
@@ -335,10 +335,19 @@ def fit_beta_parameters(r2_perm, dof_init, tol=1e-4, return_minp=False):
       dof_init:   degrees of freedom
     """
     try:
-        true_dof = scipy.optimize.newton(lambda x: df_cost(r2_perm, x), dof_init, tol=tol, maxiter=50)
+        # Find the degrees of freedom such that the first beta parameter is
+        # close to 1, by finding the root where the log of the beta parameter
+        # as a function of r2_perm and dof is 0.  Optimizing log(beta shape 1)
+        # with a parameterization of log(dof) makes this close to a linear
+        # function.
+        log_true_dof = scipy.optimize.newton(lambda x: np.log(beta_shape_1_from_dof(r2_perm, np.exp(x))),
+                                             np.log(dof_init), tol=tol, maxiter=50)
+        true_dof = np.exp(log_true_dof)
     except:
+        # fall back to minimization
         print('WARNING: scipy.optimize.newton failed to converge (running scipy.optimize.minimize)')
-        res = scipy.optimize.minimize(lambda x: np.abs(df_cost(r2_perm, x)), dof_init, method='Nelder-Mead', tol=tol)
+        res = scipy.optimize.minimize(lambda x: np.abs(beta_shape_1_from_dof(r2_perm, x) - 1),
+                                      dof_init, method='Nelder-Mead', tol=tol)
         true_dof = res.x[0]
 
     pval = pval_from_corr(r2_perm, true_dof)
