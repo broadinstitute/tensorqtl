@@ -9,20 +9,9 @@ import glob
 from datetime import datetime
 
 sys.path.insert(1, os.path.dirname(__file__))
-from core import SimpleLogger, Residualizer, center_normalize, impute_mean, get_allele_stats
+from core import *
 import mixqtl
 import qtl.genotype as gt
-
-
-has_rpy2 = False
-try:
-    subprocess.check_call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.check_call("R -e 'library(qvalue)'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    import rpy2
-    import rfunc
-    has_rpy2 = True
-except:
-    print("Warning: 'rfunc' cannot be imported. R with the 'qvalue' library, and the 'rpy2' Python package are needed.")
 
 
 def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
@@ -127,8 +116,8 @@ def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_
     return afc_df
 
 
-def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df=None, paired_covariate_df=None,
-                          interaction_s=None, compute_pi1=False, lambda_qvalue=None):
+def calculate_replication(res_df, genotypes, phenotype_df, covariates_df=None, paired_covariate_df=None,
+                          interaction_s=None, compute_pi1=False, lambda_qvalue=None, logp=False):
     """res_df: DataFrame with 'variant_id' column and phenotype IDs as index"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -136,15 +125,20 @@ def calculate_replication(res_df, genotype_df, phenotype_df, covariates_df=None,
         assert paired_covariate_df.index.equals(covariates_df.index)
         assert paired_covariate_df.columns.isin(phenotype_df.index).all()
 
-    genotypes_t = torch.tensor(genotype_df.loc[res_df['variant_id']].values, dtype=torch.float).to(device)
-    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
+    if isinstance(genotypes, pd.DataFrame):
+        genotypes_t = torch.tensor(genotypes.loc[res_df['variant_id']].values, dtype=torch.float).to(device)
+        genotype_ix = np.array([genotypes.columns.tolist().index(i) for i in phenotype_df.columns])
+    else:  # pgen.PgenReader
+        gt_df = genotypes.read_list(res_df['variant_id'], impute_mean=False)
+        genotypes_t =  torch.tensor(gt_df.values, dtype=torch.float).to(device)
+        genotype_ix = np.array([gt_df.columns.tolist().index(i) for i in phenotype_df.columns])
+
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
     genotypes_t = genotypes_t[:,genotype_ix_t]
     impute_mean(genotypes_t)
     af_t, ma_samples_t, ma_count_t = get_allele_stats(genotypes_t)
 
     phenotypes_t = torch.tensor(phenotype_df.loc[res_df.index].values, dtype=torch.float32).to(device)
-
 
     if covariates_df is not None:
         residualizer = Residualizer(torch.tensor(covariates_df.values, dtype=torch.float32).to(device))

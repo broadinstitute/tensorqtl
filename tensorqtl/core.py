@@ -6,6 +6,18 @@ import scipy.optimize
 from scipy.special import loggamma
 import sys
 import re
+import subprocess
+
+# check R
+has_rpy2 = False
+try:
+    subprocess.check_call('which R', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.check_call("R -e 'library(qvalue)'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    import rpy2
+    import rfunc
+    has_rpy2 = True
+except:
+    print("Warning: 'rfunc' cannot be imported. R with the 'qvalue' library and the 'rpy2' Python package are needed to compute q-values.")
 
 
 output_dtype_dict = {
@@ -150,6 +162,20 @@ def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False)
         return torch.mm(genotype_res_t, phenotype_res_t.t()), genotype_var_t, phenotype_var_t
     else:
         return torch.mm(genotype_res_t, phenotype_res_t.t())
+
+
+def get_t_pval(t, df, log=False):
+    """
+    Get p-value corresponding to t statistic and degrees of freedom (df). t and/or df can be arrays.
+    If log=True, returns -log10(P).
+    """
+    if not log:
+        return 2 * stats.t.cdf(-abs(t), df)
+    else:
+        if has_rpy2:
+            return -(rfunc.t_cdf(-abs(t), df, lower_tail=True, log=True) + np.log(2)) * np.log10(np.e)
+        else:
+            raise ValueError("R and rpy2 are required to compute -log10(P)")
 
 
 def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer=None,
@@ -310,9 +336,9 @@ def filter_covariates(covariates_t, log_counts_t, tstat_threshold=2):
 #------------------------------------------------------------------------------
 #  Functions for beta-approximating empirical p-values
 #------------------------------------------------------------------------------
-def pval_from_corr(r2, dof):
+def pval_from_corr(r2, dof, logp=False):
     tstat2 = dof * r2 / (1 - r2)
-    return 2*stats.t.cdf(-np.abs(np.sqrt(tstat2)), dof)
+    return get_t_pval(np.sqrt(tstat2), dof, log=logp)
 
 
 def df_cost(r2, dof):
