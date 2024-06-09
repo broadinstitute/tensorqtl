@@ -28,6 +28,26 @@ def p_adjust(p, method='BH'):
     return np.array(p_adjust(rp, method=method))
 
 
+def t_cdf(t, df, lower_tail=False, log=True):
+    """Wrapper for pt"""
+    scalar = True
+    if isinstance(t, Iterable):
+        rt = rpy2.robjects.vectors.FloatVector(t)
+        scalar = False
+    else:
+        rt = t
+    if isinstance(df, Iterable):
+        rdf = rpy2.robjects.vectors.FloatVector(df)
+        scalar = False
+    else:
+        rdf = df
+    r_pt = rpy2.robjects.r['pt']
+    res = np.array(r_pt(rt, rdf, lower_tail=lower_tail, log=log))
+    if scalar:
+        res = res[0]
+    return res
+
+
 def qvalue(p, lambda_qvalue=None):
     """Wrapper for qvalue::qvalue"""
     qvalue = importr("qvalue")
