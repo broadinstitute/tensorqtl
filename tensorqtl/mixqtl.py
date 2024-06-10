@@ -56,7 +56,7 @@ def trc(genotypes_t, counts_t, covariates_t=None, select_covariates=True,
         res = cis.calculate_cis_nominal(genotypes_t[:, m_t] / 2, y_t[m_t], return_af=False)
         if return_af:
             af, ma_samples, ma_counts = get_allele_stats(genotypes_t)
-            return *res, af, ma_samples, ma_counts
+            return res, af, ma_samples, ma_counts
         else:
             return res
 
