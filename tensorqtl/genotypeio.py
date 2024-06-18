@@ -47,14 +47,21 @@ class BackgroundGenerator(threading.Thread):
         self.start()
 
     def run(self):
-        for item in self.generator:
-            self.queue.put(item)
+        try:
+            for item in self.generator:
+                self.queue.put(item)
+        except Exception as exception:
+            self.queue.put(exception)
         self.queue.put(None)
 
     def next(self):
         next_item = self.queue.get()
         if next_item is None:
+            self.join()
             raise StopIteration
+        if isinstance(next_item, Exception):
+            self.join()
+            raise next_item
         return next_item
 
     def __next__(self):
