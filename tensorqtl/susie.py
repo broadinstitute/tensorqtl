@@ -67,9 +67,9 @@ def init_setup(n, p, L, scaled_prior_variance, varY, residual_variance=None,
         'mu': torch.zeros((L,p)).to(device),
         'mu2': torch.zeros((L,p)).to(device),
         'Xr': torch.zeros(n).to(device),
-        'KL': torch.full([L], np.NaN).to(device),
-        'lbf': torch.full([L], np.NaN).to(device),
-        'lbf_variable': torch.full([L, p], np.NaN).to(device),
+        'KL': torch.full([L], np.nan).to(device),
+        'lbf': torch.full([L], np.nan).to(device),
+        'lbf_variable': torch.full([L, p], np.nan).to(device),
         'sigma2': residual_variance,
         'V': scaled_prior_variance * varY,
         'pi': prior_weights,
@@ -105,8 +105,8 @@ def init_finalize(s, X_t=None, Xr_t=None):
         # s['Xr'] = compute_Xb(X_t, colSums(s$mu*s$alpha))
 
     # reset KL and lbf
-    s['KL'] =  torch.full([s['alpha'].shape[0]], np.NaN).to(device)
-    s['lbf'] = torch.full([s['alpha'].shape[0]], np.NaN).to(device)
+    s['KL'] =  torch.full([s['alpha'].shape[0]], np.nan).to(device)
+    s['lbf'] = torch.full([s['alpha'].shape[0]], np.nan).to(device)
 
     return s
 
@@ -471,7 +471,7 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
           estimate_residual_variance=True, estimate_prior_variance=True,
           estimate_prior_method='EM',
           check_null_threshold=0, prior_tol=1e-9,
-          residual_variance_upperbound=np.Inf,
+          residual_variance_upperbound=np.inf,
           # s_init=None,
           coverage=0.95, min_abs_corr=0.5,
           compute_univariate_zscore=False,
@@ -495,8 +495,8 @@ def susie(X_t, y_t, L=10, scaled_prior_variance=0.2,
     s = init_finalize(s)
 
     # initialize elbo to NA
-    elbo = torch.full([max_iter + 1], np.NaN).to(device)
-    elbo[0] = -np.Inf;
+    elbo = torch.full([max_iter + 1], np.nan).to(device)
+    elbo[0] = -np.inf;
     tracking = []
     for i in range(1, max_iter+1):
 

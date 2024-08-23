@@ -238,7 +238,7 @@ def calculate_replication(res_df, genotypes, phenotype_df, covariates_df=None, p
         try:
             pi1 = 1 - rfunc.pi0est(pval, lambda_qvalue=lambda_qvalue)[0]
         except:
-            pi1 = np.NaN
+            pi1 = np.nan
         return pi1, rep_df
     else:
         return rep_df

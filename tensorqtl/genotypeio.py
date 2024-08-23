@@ -19,8 +19,8 @@ except ImportError as e:
     pgen = None
 
 
-gt_to_dosage_dict = {'0/0':0, '0/1':1, '1/1':2, './.':np.NaN,
-                     '0|0':0, '0|1':1, '1|0':1, '1|1':2, '.|.':np.NaN}
+gt_to_dosage_dict = {'0/0':0, '0/1':1, '1/1':2, './.':np.nan,
+                     '0|0':0, '0|1':1, '1|0':1, '1|1':2, '.|.':np.nan}
 
 
 def _check_dependency(name):
