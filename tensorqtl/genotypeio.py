@@ -452,6 +452,10 @@ class InputGeneratorCis(object):
             print(f'    ** dropping {np.sum(m)} constant phenotypes')
             self.phenotype_df = self.phenotype_df.loc[~m]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[~m]
+
+        if len(self.phenotype_df) == 0:
+            raise ValueError("No phenotypes remain after filters.")
+
         self.group_s = None
         self.window = window
 
