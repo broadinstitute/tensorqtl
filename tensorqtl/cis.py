@@ -780,7 +780,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
     return res_df.astype(output_dtype_dict).infer_objects()
 
 
-def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos_df, covariates_df,
+def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos_df, covariates_df=None,
                     group_s=None, maf_threshold=0, fdr=0.05, fdr_col='qval', nperm=10000, window=1000000,
                     missing=-9, random_tiebreak=False, logger=None, seed=None, logp=False, verbose=True):
     """
@@ -790,15 +790,16 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    assert phenotype_df.index.equals(phenotype_pos_df.index)
-    assert covariates_df.index.equals(phenotype_df.columns)
     if logger is None:
         logger = SimpleLogger()
 
+    logger.write('cis-QTL mapping: conditionally independent variants')
+    logger.write(f'  * {phenotype_df.shape[1]} samples')
+
+    # subset significant phenotypes
     signif_df = cis_df[cis_df[fdr_col] <= fdr].copy()
     if len(signif_df) == 0:
         raise ValueError(f"No significant phenotypes at FDR ≤ {fdr}.")
-
     cols = ['num_var', 'beta_shape1', 'beta_shape2', 'true_df', 'pval_true_df', 'variant_id',
             'start_distance', 'end_distance', 'ma_samples', 'ma_count', 'af',
             'pval_nominal', 'slope', 'slope_se', 'pval_perm', 'pval_beta']
@@ -806,21 +807,22 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
         cols += ['group_id', 'group_size']
     signif_df = signif_df[cols]
     signif_threshold = signif_df['pval_beta'].max()
-    # subset significant phenotypes
     if group_s is None:
         ix = phenotype_df.index[phenotype_df.index.isin(signif_df.index)]
-    else:
-        ix = group_s[phenotype_df.index].loc[group_s[phenotype_df.index].isin(signif_df['group_id'])].index
-
-    logger.write('cis-QTL mapping: conditionally independent variants')
-    logger.write(f'  * {phenotype_df.shape[1]} samples')
-    if group_s is None:
         logger.write(f'  * {signif_df.shape[0]}/{cis_df.shape[0]} significant phenotypes')
     else:
+        ix = group_s[phenotype_df.index].loc[group_s[phenotype_df.index].isin(signif_df['group_id'])].index
         logger.write(f'  * {signif_df.shape[0]}/{cis_df.shape[0]} significant groups')
         logger.write(f'    {len(ix)}/{phenotype_df.shape[0]} phenotypes')
         group_dict = group_s.to_dict()
-    logger.write(f'  * {covariates_df.shape[1]} covariates')
+
+    assert phenotype_df.index.equals(phenotype_pos_df.index)
+
+    if covariates_df is not None:
+        assert covariates_df.index.equals(phenotype_df.columns), 'Sample names in phenotype matrix columns and covariate matrix rows do not match!'
+        assert ~(covariates_df.isnull().any().any()), f'Missing or null values in covariates matrix, in columns {",".join(covariates_df.columns[covariates_df.isnull().any(axis=0)].astype(str))}'
+        logger.write(f'  * {covariates_df.shape[1]} covariates')
+
     logger.write(f'  * {genotype_df.shape[0]} variants')
     if maf_threshold > 0:
         logger.write(f'  * applying in-sample {maf_threshold} MAF filter')
@@ -832,7 +834,6 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
-    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
     ix_dict = {i:k for k,i in enumerate(genotype_df.index)}
 
     # permutation indices
@@ -866,7 +867,11 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
             # 1) forward pass
             forward_df = [signif_df.loc[phenotype_id]]  # initialize results with top variant
-            covariates = covariates_df.values.copy()  # initialize covariates
+            # initialize covariates
+            if covariates_df is not None:
+                covariates = covariates_df.values.copy()
+            else:
+                covariates = np.empty((phenotype_df.shape[1], 0))
             dosage_dict = {}
             while True:
                 # add variant to covariates
@@ -903,10 +908,13 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 back_df = []
                 variant_set = set()
                 for k,i in enumerate(forward_df['variant_id'], 1):
-                    covariates = np.hstack([
-                        covariates_df.values,
-                        dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values,
-                    ])
+                    if covariates_df is not None:
+                        covariates = np.hstack([
+                            covariates_df.values,
+                            dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values,
+                        ])
+                    else:
+                        covariates = dosage_df[np.setdiff1d(forward_df['variant_id'], i)].values
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                     residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
@@ -947,7 +955,11 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
 
             # 1) forward pass
             forward_df = [signif_df[signif_df['group_id'] == group_id].iloc[0]]  # initialize results with top variant
-            covariates = covariates_df.values.copy()  # initialize covariates
+            # initialize covariates
+            if covariates_df is not None:
+                covariates = covariates_df.values.copy()
+            else:
+                covariates = np.empty((phenotype_df.shape[1], 0))
             dosage_dict = {}
             while True:
                 # add variant to covariates
@@ -985,10 +997,13 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 back_df = []
                 variant_set = set()
                 for k,variant_id in enumerate(forward_df['variant_id'], 1):
-                    covariates = np.hstack([
-                        covariates_df.values,
-                        dosage_df[np.setdiff1d(forward_df['variant_id'], variant_id)].values,
-                    ])
+                    if covariates_df is not None:
+                        covariates = np.hstack([
+                            covariates_df.values,
+                            dosage_df[np.setdiff1d(forward_df['variant_id'], variant_id)].values,
+                        ])
+                    else:
+                        covariates = dosage_df[np.setdiff1d(forward_df['variant_id'], variant_id)].values
                     dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                     residualizer = Residualizer(torch.tensor(covariates, dtype=torch.float32).to(device))
 
