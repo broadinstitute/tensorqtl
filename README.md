@@ -3,8 +3,7 @@
 tensorQTL is a GPU-enabled QTL mapper, achieving ~200-300 fold faster *cis*- and *trans*-QTL mapping compared to CPU-based implementations.
 
 If you use tensorQTL in your research, please cite the following paper:
-[Taylor-Weiner, Aguet, et al., *Genome Biol.*, 2019](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1836-7).
-
+[Taylor-Weiner, Aguet, et al., *Genome Biol.*, 2019](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1836-7).</br>
 Empirical beta-approximated p-values are computed as described in [Ongen et al., *Bioinformatics*, 2016](https://academic.oup.com/bioinformatics/article/32/10/1479/1742545).
 
 ### Install
@@ -16,12 +15,20 @@ or directly from this repository:
 ```
 $ git clone git@github.com:broadinstitute/tensorqtl.git
 $ cd tensorqtl
-# set up virtual environment and install
-$ virtualenv venv
-$ source venv/bin/activate
-(venv)$ pip install -r install/requirements.txt .
+# install into a new virtual environment and load
+$ mamba env create -f install/tensorqtl_env.yml
+$ conda activate tensorqtl
 ```
-To use PLINK 2 binary files ([pgen/pvar/psam](https://www.cog-genomics.org/plink/2.0/input#pgen)), [pgenlib](https://github.com/chrchang/plink-ng/tree/master/2.0/Python) must be installed:
+To install the latest version from this repository, run
+```
+pip install pip@git+https://github.com/broadinstitute/tensorqtl.git
+```
+
+To use PLINK 2 binary files ([pgen/pvar/psam](https://www.cog-genomics.org/plink/2.0/input#pgen)), [pgenlib](https://github.com/chrchang/plink-ng/tree/master/2.0/Python) must be installed using either
+```
+pip install Pgenlib
+```
+(this is included in `tensorqtl_env.yml` above), or from the source :
 ```
 git clone git@github.com:chrchang/plink-ng.git
 cd plink-ng/2.0/Python/
@@ -35,18 +42,18 @@ tensorQTL requires an environment configured with a GPU for optimal performance,
 
 ### Input formats
 Three inputs are required for QTL analyses with tensorQTL: genotypes, phenotypes, and covariates. 
-* Phenotypes must be provided in BED format, with a single header line starting with `#` and the first four columns corresponding to: `chr`, `start`, `end`, `phenotype_id`, with the remaining columns corresponding to samples (the identifiers must match those in the genotype input). The BED file should specify the center of the *cis*-window (usually the TSS), with `start == end-1`. A function for generating a BED template from a gene annotation in GTF format is available in [pyqtl](https://github.com/broadinstitute/pyqtl) (`io.gtf_to_tss_bed`).
+* Phenotypes must be provided in BED format, with a single header line starting with `#` and the first four columns corresponding to: `chr`, `start`, `end`, `phenotype_id`, with the remaining columns corresponding to samples (the identifiers must match those in the genotype input). In addition to .bed/.bed.gz, BED input in .parquet is also supported. The BED file can specify the center of the *cis*-window (usually the TSS), with `start == end-1`, or alternatively, start and end positions, in which case the *cis*-window is [start-window, end+window]. A function for generating a BED template from a gene annotation in GTF format is available in [pyqtl](https://github.com/broadinstitute/pyqtl) (`io.gtf_to_tss_bed`).
 * Covariates can be provided as a tab-delimited text file (covariates x samples) or dataframe (samples x covariates), with row and column headers.
-* Genotypes must be in [PLINK](https://www.cog-genomics.org/plink/2.0/) format, which can be generated from a VCF as follows:
+* Genotypes should preferrably be in [PLINK2](https://www.cog-genomics.org/plink/2.0/) pgen/pvar/psam format, which can be generated from a VCF as follows:
   ```
-  plink2 --make-bed \
+  plink2 \
       --output-chr chrM \
       --vcf ${plink_prefix_path}.vcf.gz \
       --out ${plink_prefix_path}
   ```
-  If using PLINK 1.9 or earlier, add the `--keep-allele-order` flag. 
+  If using `--make-bed` with PLINK 1.9 or earlier, add the `--keep-allele-order` flag. 
   
-  Alternatively, the genotypes can be provided as a dataframe (genotypes x samples). 
+  Alternatively, the genotypes can be provided in bed/bim/fam format, or as a parquet dataframe (genotypes x samples). 
 
 
 The [examples notebook](example/tensorqtl_examples.ipynb) below contains examples of all input files. The input formats for phenotypes and covariates are identical to those used by [FastQTL](https://github.com/francois-a/fastqtl).
