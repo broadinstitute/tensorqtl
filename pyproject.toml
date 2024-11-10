@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["tensorqtl"]
+
+[project]
+name = "tensorqtl"
+version = "1.0.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "Pgenlib>=0.90.1",
+    "qtl",
+    "scipy",
+    "torch",
+]
+authors = [
+    {name = "Francois Aguet", email = "francois@broadinstitute.org"}
+]
+maintainers = [
+    {name = "Francois Aguet", email = "francois@broadinstitute.org"}
+]
+description = "GPU-accelerated QTL mapper"
+readme = "README.md"
+license = {file = "LICENSE"}
+keywords = ["Quantitative trait loci"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Repository = "https://github.com/broadinstitute/tensorqtl.git"

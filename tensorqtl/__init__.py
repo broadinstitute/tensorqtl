@@ -1,2 +1,4 @@
-__version__ = "1.0.10"
+import importlib.metadata
 from .tensorqtl import *
+
+__version__ = importlib.metadata.version(__name__)

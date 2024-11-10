@@ -9,11 +9,11 @@ import re
 import pickle
 import argparse
 from collections import defaultdict
+import importlib.metadata
 
 sys.path.insert(1, os.path.dirname(__file__))
 from core import *
 from post import *
-from . import __version__
 import genotypeio, cis, trans, susie
 
 
@@ -59,7 +59,7 @@ def main():
         raise ValueError("Interactions are only supported in 'cis_nominal' or 'trans' mode.")
 
     logger = SimpleLogger(os.path.join(args.output_dir, f'{args.prefix}.tensorQTL.{args.mode}.log'))
-    logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Running TensorQTL v{__version__}: {args.mode.split("_")[0]}-QTL mapping')
+    logger.write(f'[{datetime.now().strftime("%b %d %H:%M:%S")}] Running TensorQTL v{importlib.metadata.version("tensorqtl")}: {args.mode.split("_")[0]}-QTL mapping')
     if torch.cuda.is_available():
         logger.write(f'  * using GPU ({torch.cuda.get_device_name(torch.cuda.current_device())})')
     else:
@@ -230,14 +230,14 @@ def main():
         summary_df = pd.read_csv(args.cis_output, sep='\t', index_col=0)
         summary_df.rename(columns={'minor_allele_samples':'ma_samples', 'minor_allele_count':'ma_count'}, inplace=True)
         if args.chunk_size is None:
-            res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df,
+            res_df = cis.map_independent(genotype_df, variant_df, summary_df, phenotype_df, phenotype_pos_df, covariates_df=covariates_df,
                                          group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
                                          maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True)
         else:
             res_df = []
             for gt_df, var_df, p_df, p_pos_df, _ in genotypeio.generate_paired_chunks(pgr, phenotype_df, phenotype_pos_df, args.chunk_size,
                                                                                       dosages=args.dosages, verbose=True):
-                res_df.append(cis.map_independent(gt_df, var_df, summary_df, p_df, p_pos_df, covariates_df,
+                res_df.append(cis.map_independent(gt_df, var_df, summary_df, p_df, p_pos_df, covariates_df=covariates_df,
                                                   group_s=group_s, fdr=args.fdr, nperm=args.permutations, window=args.window,
                                                   maf_threshold=maf_threshold, logger=logger, seed=args.seed, verbose=True))
             res_df = pd.concat(res_df).reset_index(drop=True)
