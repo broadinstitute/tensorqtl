@@ -185,7 +185,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         mask_s = pd.Series(True, index=interaction_s.index)
         mask_s[interaction_s.sort_values(kind='mergesort').index[:interaction_s.shape[0]//2]] = False
-        interaction_mask_t = torch.BoolTensor(mask_s).to(device)
+        interaction_mask_t = torch.BoolTensor(mask_s.values).to(device)
 
         ggt = genotypeio.GenotypeGeneratorTrans(genotype_df, batch_size=batch_size)
         start_time = time.time()
