@@ -182,7 +182,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
 
     else:  # interaction model
         dof = n_samples - 4 - covariates_df.shape[1]
-        interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
+        interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)  # 1 x n_samples
         mask_s = pd.Series(True, index=interaction_s.index)
         mask_s[interaction_s.sort_values(kind='mergesort').index[:interaction_s.shape[0]//2]] = False
         interaction_mask_t = torch.BoolTensor(mask_s.values).to(device)
@@ -273,7 +273,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df=None, interaction_s=None,
                 genotypes_t, mask_t = filter_maf_interaction(genotypes_t[:, genotype_ix_t],
                                                              interaction_mask_t=interaction_mask_t,
                                                              maf_threshold_interaction=maf_threshold)
-                res = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
+                res = calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t.t(), residualizer,
                                                     return_sparse=return_sparse)
                 # res: tstat, b, b_se, af, ma_samples, ma_count
                 res = [i.cpu().numpy() for i in res]
