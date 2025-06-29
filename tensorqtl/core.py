@@ -420,7 +420,7 @@ def read_phenotype_bed(phenotype_bed):
 
     # make sure BED file is properly sorted
     assert pos_df.equals(
-        pos_df.groupby('chr', sort=False, group_keys=False).apply(lambda x: x.sort_values(['start', 'end']))
+        pos_df.groupby('chr', sort=False, group_keys=False)[pos_df.columns].apply(lambda x: x.sort_values(['start', 'end']))
     ), "Positions in BED file must be sorted."
 
     if (pos_df['start'] == pos_df['end']).all():
