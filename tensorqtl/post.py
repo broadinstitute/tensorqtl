@@ -20,22 +20,41 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
         logger = SimpleLogger()
 
     logger.write('Computing q-values')
-    logger.write(f'  * Number of phenotypes tested: {res_df.shape[0]}')
 
     if not res_df['pval_beta'].isnull().all():
+        # Select only rows with finite p-values and beta parameters
+        mask = (
+                np.isfinite(res_df['pval_perm']) &
+                np.isfinite(res_df['pval_beta']) &
+                np.isfinite(res_df['beta_shape1']) &
+                np.isfinite(res_df['beta_shape2'])
+        )
+        logger.write(f'  * Number of phenotypes tested: {res_df.loc[mask].shape[0]}')
         pval_col = 'pval_beta'
-        r = stats.pearsonr(res_df['pval_perm'], res_df['pval_beta'])[0]
+        r = stats.pearsonr(res_df.loc[mask, 'pval_perm'], res_df.loc[mask, 'pval_beta'])[0]
         logger.write(f'  * Correlation between Beta-approximated and empirical p-values: {r:.4f}')
     else:
+        mask = np.isfinite(res_df['pval_perm'])
+        logger.write(f'  * Number of phenotypes tested: {res_df.loc[mask].shape[0]}')
         pval_col = 'pval_perm'
         logger.write(f'  * WARNING: no beta-approximated p-values found, using permutation p-values instead.')
 
     # calculate q-values
     if qvalue_lambda is not None:
         logger.write(f'  * Calculating q-values with lambda = {qvalue_lambda:.3f}')
-    qval, pi0 = rfunc.qvalue(res_df[pval_col], lambda_qvalue=qvalue_lambda)
 
-    res_df['qval'] = qval
+    # The R qvalue package sometimes fails with errors like:
+    #   Error in smooth.spline(lambda, pi0, df = smooth.df) :
+    #     missing or infinite values in inputs are not allowed
+    # See also:
+    #   - https://github.com/StoreyLab/qvalue/issues/9#issuecomment-358661365
+    try:
+        qval, pi0 = rfunc.qvalue(res_df.loc[mask, pval_col], lambda_qvalue=qvalue_lambda)
+    except Exception as e:
+        logger.write(f'  * WARNING: qvalue calculation failed ({e})')
+        return
+
+    res_df.loc[mask, 'qval'] = qval
     logger.write(f'  * Proportion of significant phenotypes (1-pi0): {1-pi0:.2f}')
     logger.write(f"  * QTL phenotypes @ FDR {fdr:.2f}: {(res_df['qval'] <= fdr).sum()}")
 
@@ -52,7 +71,11 @@ def calculate_qvalues(res_df, fdr=0.05, qvalue_lambda=None, logger=None):
             else:
                 pthreshold = lb
             logger.write(f'  * min p-value threshold @ FDR {fdr}: {pthreshold:.6g}')
-            res_df['pval_nominal_threshold'] = stats.beta.ppf(pthreshold, res_df['beta_shape1'], res_df['beta_shape2'])
+            res_df.loc[mask, 'pval_nominal_threshold'] = stats.beta.ppf(
+                pthreshold,
+                res_df.loc[mask, 'beta_shape1'],
+                res_df.loc[mask, 'beta_shape2'],
+            )
 
 
 def calculate_afc(assoc_df, counts_df, genotype_df, variant_df=None, covariates_df=None,
