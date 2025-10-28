@@ -50,11 +50,17 @@ RUN Rscript -e 'if (!requireNamespace("BiocManager", quietly = TRUE)) {install.p
 # python modules
 RUN pip3 install --upgrade pip setuptools
 RUN pip3 install numpy pandas scipy
-RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow torch rpy2 gcsfs Pgenlib>=0.90.1
-RUN pip3 install tensorqtl==1.0.9
+# Make sure we support Tesla P100-PCIE-16GB with CUDA capability sm_60
+# Via https://pytorch.org/get-started/locally/
+RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu126
+RUN pip3 install pandas-plink ipython jupyter matplotlib pyarrow rpy2 gcsfs Pgenlib>=0.90.1
 
 # RUN cd /opt && \
 #     wget https://github.com/broadinstitute/tensorqtl/archive/v1.0.8.tar.gz && \
 #     tar -xf v1.0.8.tar.gz && mv tensorqtl-1.0.8 tensorqtl && \
 #     rm v1.0.8.tar.gz
 # RUN pip3 install /opt/tensorqtl/
+
+COPY pyproject.toml LICENSE README.md /opt/tensorqtl/
+COPY tensorqtl/ /opt/tensorqtl/tensorqtl/
+RUN pip3 install /opt/tensorqtl
