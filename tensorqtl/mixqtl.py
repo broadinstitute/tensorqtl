@@ -164,7 +164,7 @@ def linreg(X_t, y_t):
     Xtilde_t = (X_t - x_mean_t) / x_std_t
     XtX_t = torch.matmul(Xtilde_t.T, Xtilde_t)
     Xty_t = torch.matmul(Xtilde_t.T, y_t)
-    b_t, _ = torch.solve(Xty_t.unsqueeze(-1), XtX_t)
+    b_t = torch.linalg.solve(XtX_t, Xty_t.unsqueeze(-1))
     b_t = b_t.squeeze()
 
     dof = X_t.shape[0] - X_t.shape[1]
@@ -172,7 +172,7 @@ def linreg(X_t, y_t):
     sigma2_t = (r_t*r_t).sum() / dof
 
     # compute s.e.
-    XtX_inv_t, _ = torch.solve(torch.eye(X_t.shape[1]).to(device), XtX_t)
+    XtX_inv_t = torch.linalg.solve(XtX_t, torch.eye(X_t.shape[1]).to(device))
     var_b_t = sigma2_t * XtX_inv_t
     b_se_t = torch.sqrt(torch.diag(var_b_t))
 
@@ -227,16 +227,29 @@ def trc_calc(genotypes_t, log_counts_t, raw_counts_t, covariates0_t,
     # # [tstat, beta, beta_se, maf, ma_samples, ma_count], samples, dof
     # return res, covariates_t.shape[0], residualizer.dof
 
+    # mixqtl.R order: covariate offset fit on ALL observed individuals, subtracted BEFORE the count
+    # filter (no covariate re-fit on the survivor subset -> stable + unbiased-by-selection; matches R).
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    fit_t = (raw_counts_t > 0) & torch.isfinite(log_counts_t)
+    b_t, b_se_t = linreg(covariates0_t[fit_t], log_counts_t[fit_t])   # col 0 = intercept
+    keep_t = torch.ones(covariates0_t.shape[1], dtype=torch.bool, device=device)
+    keep_t[0] = False
     if select_covariates:
-        covariates_t = filter_covariates(covariates0_t, log_counts_t)
+        keep_t = keep_t & ((b_t / b_se_t).abs() > 2)
+    if bool(keep_t.any()):
+        Xc2_t = torch.cat([covariates0_t[fit_t][:, :1], covariates0_t[fit_t][:, keep_t]], dim=1)
+        b2_t, _ = linreg(Xc2_t, log_counts_t[fit_t])
+        offset_t = covariates0_t[:, keep_t] @ b2_t[1:]
     else:
-        covariates_t = covariates0_t[:, 1:]
+        offset_t = torch.zeros_like(log_counts_t)
 
+    y_t = log_counts_t - offset_t
     mask_t = raw_counts_t >= count_threshold
-    residualizer = tensorqtl.Residualizer(covariates_t[mask_t])
-    res = cis.calculate_cis_nominal(genotypes_t[:, mask_t] / 2, log_counts_t[mask_t].reshape(1,-1), residualizer)
+    # 1-D phenotype: with residualizer=None, dof = phenotype.shape[0]-2; (1,n) would give dof=-1 -> NaN se.
+    res = cis.calculate_cis_nominal(genotypes_t[:, mask_t] / 2, y_t[mask_t], residualizer=None)
     # [tstat, beta, beta_se, maf, ma_samples, ma_count], samples
-    return res, int(mask_t.sum()), residualizer.dof
+    n = int(mask_t.sum())
+    return res, n, n - 2
 
 
 def asc_calc(hap1_t, hap2_t, ref_t, alt_t, ase_threshold=50, ase_max=1000, weight_cap=100):
@@ -288,7 +301,7 @@ def asc_calc(hap1_t, hap2_t, ref_t, alt_t, ase_threshold=50, ase_max=1000, weigh
 
         return [tstat_t, b_t, b_se_t], n, dof
     else:
-        return None, 0, np.NaN
+        return None, 0, np.nan
 
 
 def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_df, alt_df,
@@ -346,16 +359,17 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
         chr_res['pval_trc'] =       np.empty(n, dtype=np.float64)
         chr_res['samples_trc'] =    np.empty(n, dtype=np.int32)
         chr_res['dof_trc'] =        np.empty(n, dtype=np.int32)
-        chr_res['beta_asc'] =       np.empty(n, dtype=np.float32)
-        chr_res['beta_se_asc'] =    np.empty(n, dtype=np.float32)
-        chr_res['tstat_asc'] =      np.empty(n, dtype=np.float32)
-        chr_res['pval_asc'] =       np.empty(n, dtype=np.float64)
-        chr_res['samples_asc'] =    np.empty(n, dtype=np.int32)
-        chr_res['dof_asc'] =        np.empty(n, dtype=np.int32)
-        chr_res['beta_meta'] =      np.empty(n, dtype=np.float32)
-        chr_res['beta_se_meta'] =   np.empty(n, dtype=np.float32)
-        chr_res['tstat_meta'] =     np.empty(n, dtype=np.float32)
-        chr_res['pval_meta'] =      np.empty(n, dtype=np.float64)
+        chr_res['beta_asc'] =       np.full(n, np.nan, dtype=np.float32)
+        chr_res['beta_se_asc'] =    np.full(n, np.nan, dtype=np.float32)
+        chr_res['tstat_asc'] =      np.full(n, np.nan, dtype=np.float32)
+        chr_res['pval_asc'] =       np.full(n, np.nan, dtype=np.float64)
+        chr_res['samples_asc'] =    np.full(n, -1, dtype=np.int32)
+        chr_res['dof_asc'] =        np.full(n, -1, dtype=np.int32)
+        chr_res['beta_meta'] =      np.full(n, np.nan, dtype=np.float32)
+        chr_res['beta_se_meta'] =   np.full(n, np.nan, dtype=np.float32)
+        chr_res['tstat_meta'] =     np.full(n, np.nan, dtype=np.float32)
+        chr_res['pval_meta'] =      np.full(n, np.nan, dtype=np.float64)
+        chr_res['samples_meta'] =   np.full(n, -1, dtype=np.int32)   # effective n for R's meta z/t p-value rule
 
         start = 0
         for k, (raw_counts, log_counts, ref, alt, hap1, hap2, genotype_range, phenotype_id) in enumerate(igm.generate_data(chrom=chrom, verbose=verbose), k+1):
@@ -402,6 +416,8 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             chr_res['samples_trc'][start:start+n] = samples_trc
             chr_res['dof_trc'][start:start+n] = dof_trc
 
+            # ---- meta: mirror mixqtl.R rlib_meta.R::my_meta_fast_ (trc-fallback + n_cutoff gate) ----
+            META_N_CUTOFF = 15
             if res_asc is not None:
                 [tstat_asc, beta_asc, beta_se_asc] = res_asc
                 chr_res['beta_asc'][start:start+n] = beta_asc.cpu().numpy()
@@ -409,14 +425,39 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
                 chr_res['tstat_asc'][start:start+n] = tstat_asc.cpu().numpy()
                 chr_res['samples_asc'][start:start+n] = samples_asc
                 chr_res['dof_asc'][start:start+n] = dof_asc
-                # meta-analysis
-                d = 1/beta_se_trc**2 + 1/beta_se_asc**2
-                beta_meta_t = (beta_asc/beta_se_asc**2 + beta_trc/beta_se_trc**2) / d
-                beta_se_meta_t = 1 / torch.sqrt(d)
-                tstat_meta_t = beta_meta_t / beta_se_meta_t
-                chr_res['beta_meta'][start:start+n] = beta_meta_t.cpu().numpy()
-                chr_res['beta_se_meta'][start:start+n] = beta_se_meta_t.cpu().numpy()
-                chr_res['tstat_meta'][start:start+n] = tstat_meta_t.cpu().numpy()
+
+                if samples_trc >= samples_asc:
+                    pri_b, pri_se, alt_b, alt_se = beta_trc, beta_se_trc, beta_asc, beta_se_asc
+                else:
+                    pri_b, pri_se, alt_b, alt_se = beta_asc, beta_se_asc, beta_trc, beta_se_trc
+                beta_meta_t = pri_b.clone()
+                beta_se_meta_t = pri_se.clone()
+                swap = torch.isnan(beta_meta_t) & torch.isfinite(alt_b)
+                beta_meta_t = torch.where(swap, alt_b, beta_meta_t)
+                beta_se_meta_t = torch.where(swap, alt_se, beta_se_meta_t)
+                if samples_trc >= META_N_CUTOFF and samples_asc >= META_N_CUTOFF:
+                    d = 1/beta_se_trc**2 + 1/beta_se_asc**2
+                    comb_b = (beta_asc/beta_se_asc**2 + beta_trc/beta_se_trc**2) / d
+                    comb_se = 1 / torch.sqrt(d)
+                    ok = torch.isfinite(comb_b)
+                    beta_meta_t = torch.where(ok, comb_b, beta_meta_t)
+                    beta_se_meta_t = torch.where(ok, comb_se, beta_se_meta_t)
+            else:
+                beta_meta_t = beta_trc.clone()
+                beta_se_meta_t = beta_se_trc.clone()
+
+            tstat_meta_t = beta_meta_t / beta_se_meta_t
+            chr_res['beta_meta'][start:start+n] = beta_meta_t.cpu().numpy()
+            chr_res['beta_se_meta'][start:start+n] = beta_se_meta_t.cpu().numpy()
+            chr_res['tstat_meta'][start:start+n] = tstat_meta_t.cpu().numpy()
+
+            # effective n for the meta p-value (R get_pval_fast_): IV-combine -> n_trc+n_asc; else the arm used
+            if res_asc is not None:
+                sm = (samples_trc + samples_asc) if (samples_trc >= META_N_CUTOFF and samples_asc >= META_N_CUTOFF) \
+                     else max(samples_trc, samples_asc)
+            else:
+                sm = samples_trc
+            chr_res['samples_meta'][start:start+n] = sm
 
             start += n  # update pointer
 
@@ -432,9 +473,18 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             # torch.distributions.StudentT.cdf is still not implemented --> use scipy
             # m = chr_res_df['pval_nominal'].notnull()
             # chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
-            chr_res_df['pval_trc'] = 2*stats.t.cdf(-chr_res_df['tstat_trc'].abs(), chr_res_df['dof_trc'])
-            chr_res_df['pval_asc'] = 2*stats.t.cdf(-chr_res_df['tstat_asc'].abs(), chr_res_df['dof_asc'])
-            chr_res_df['pval_meta'] = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
+            # p-values per mixqtl.R get_pval_fast_ (rlib_meta.R): z when n > n_cutoff (15), else Student-t
+            # with df = sample size (R's convention). n = the arm/meta sample size, NOT residual dof.
+            def r_pval(tstat, n, n_cutoff=15):
+                t = np.abs(np.asarray(tstat, dtype=np.float64))
+                nn = np.asarray(n, dtype=np.float64)
+                z_p = 2 * stats.norm.cdf(-t)
+                with np.errstate(invalid='ignore'):
+                    t_p = 2 * stats.t.cdf(-t, np.where(nn > 0, nn, 1))
+                return np.where(nn > n_cutoff, z_p, t_p)
+            chr_res_df['pval_trc']  = r_pval(chr_res_df['tstat_trc'],  chr_res_df['samples_trc'])
+            chr_res_df['pval_asc']  = r_pval(chr_res_df['tstat_asc'],  chr_res_df['samples_asc'])
+            chr_res_df['pval_meta'] = r_pval(chr_res_df['tstat_meta'], chr_res_df['samples_meta'])
 
             print('    * writing output')
             chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.mixQTL.{}.parquet'.format(prefix, chrom)))
